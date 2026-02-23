@@ -3,5 +3,5 @@ uvicorn
 gunicorn
 pandas
 sqlalchemy
-pyodbc
 python-dotenv
+pymssql
