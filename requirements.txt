@@ -5,3 +5,4 @@ pandas
 sqlalchemy
 python-dotenv
 pymssql
+dnspython
