@@ -16,7 +16,7 @@ DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
 DB_PORT = os.getenv("DB_PORT", "1433")
 DB_NAME = "db360"
-DB_DRIVER = os.getenv("DB_DRIVER", "pymssql")  # Puede ser 'pymssql' o 'pyodbc'
+DB_DRIVER = os.getenv("DB_DRIVER", "pymssql")
 
 # Mostrar configuración al iniciar (sin contraseña)
 print("=" * 60)
@@ -165,6 +165,11 @@ def conectar_bd():
         return None
 
 # 5. Endpoints de monitoreo
+@app.get("/")
+async def root():
+    """Redirige a health check"""
+    return {"message": "API funcionando. Prueba /health o /api/connection-status"}
+
 @app.get("/health")
 async def health_check():
     """Endpoint de salud que muestra estado de conexión y último error"""
@@ -200,9 +205,8 @@ async def connection_status():
 @app.get("/api/diagnostico")
 async def diagnostico():
     """Realiza pruebas de red y conexión para diagnosticar problemas."""
-    import socket
-    import dns.resolver  # necesitas instalar dnspython
-
+    # Nota: para usar dns.resolver necesitas instalar dnspython
+    # Si no está instalado, comenta esa parte o usa socket.gethostbyname
     resultados = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "servidor": DB_SERVER,
@@ -285,5 +289,5 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     reload_mode = False if os.getenv("RAILWAY_ENVIRONMENT") else True
 
-    print(f"\nIniciando servidor en puerto: {port}")
+    print(f"\nIniciando servidor en puerto: {port} (host=0.0.0.0)")
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=reload_mode)
