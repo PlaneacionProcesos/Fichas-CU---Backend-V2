@@ -13,6 +13,7 @@ DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
 DB_PORT = os.getenv("DB_PORT", "1433")  # Puerto por defecto de SQL Server
 DB_NAME = "db360"  # Base de datos única
+DB_TABLA = "dbo.Poblacion Estudiantil"  # Tabla específica con esquema
 
 if not all([DB_SERVER, DB_USER, DB_PASS]):
     raise ValueError("Faltan credenciales críticas en el entorno")
@@ -99,15 +100,6 @@ def get_db_engine():
         print(f"Error creando engine para db360: {str(e)}")
         return None
 
-# 5. Tablas disponibles en db360
-TABLAS = {
-    "ebitda": "Proyeccion_EBITDA",
-    "indicadores": "Proyeccion_Indicadores",
-    "poblacion": "Poblacion_Estudiantil",
-    "estudiantes": "Proyeccion_Estudiantes",
-    "desercion": "Desercion_Resumenes_CU"
-}
-
 # --- ENDPOINTS ---
 
 @app.get("/health")
@@ -117,206 +109,138 @@ async def health_check():
         "status": "ok",
         "message": "API funcionando (conexiones bajo demanda)",
         "database": f"{DB_SERVER}/{DB_NAME}",
+        "tabla": DB_TABLA,
         "timestamp": pd.Timestamp.now().isoformat()
     }
-
-@app.get("/api/tablas")
-async def get_tablas_disponibles():
-    """Devuelve la lista de tablas disponibles en db360"""
-    return {
-        "base_datos": DB_NAME,
-        "tablas": list(TABLAS.keys()),
-        "tablas_nombres": list(TABLAS.values())
-    }
-
-@app.get("/api/observatorio/completo/{centro_id}")
-async def get_all_data(centro_id: str):
-    """Obtiene todos los datos de un centro desde todas las tablas de db360"""
-    resultados = {}
-    errores = []
-    conexiones_exitosas = 0
-    
-    # Obtener el engine una sola vez para todas las consultas
-    engine = get_db_engine()
-    if not engine:
-        raise HTTPException(status_code=503, detail="No se pudo conectar a la base de datos db360")
-    
-    for clave, nombre_tabla in TABLAS.items():
-        try:
-            print(f"Consultando tabla {nombre_tabla} para centro {centro_id}")
-            
-            # Consulta específica para cada tabla
-            query = text(f"SELECT * FROM {nombre_tabla} WHERE centro_id = :id")
-            df = pd.read_sql(query, engine, params={"id": centro_id})
-            
-            # Convertir datetime a string
-            for col in df.select_dtypes(include=['datetime64']).columns:
-                df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-                
-            resultados[clave] = df.to_dict(orient="records")
-            conexiones_exitosas += 1 if not df.empty else 0
-            
-        except Exception as e:
-            print(f"Error en tabla {nombre_tabla}: {str(e)}")
-            resultados[clave] = []
-            errores.append(f"Error en {clave}: {str(e)[:100]}")
-    
-    response = {
-        "centro": centro_id, 
-        "base_datos": DB_NAME,
-        "data": resultados,
-        "tablas_con_datos": conexiones_exitosas,
-        "total_tablas": len(TABLAS),
-        "timestamp": pd.Timestamp.now().isoformat()
-    }
-    
-    if errores:
-        response["warnings"] = errores
-        
-    return response
-
-@app.get("/api/ebitda/{centro_id}")
-async def get_ebitda(centro_id: str):
-    """Datos de EBITDA desde tabla Proyeccion_EBITDA en db360"""
-    try:
-        engine = get_db_engine()
-        if not engine: 
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        
-        query = text(f"SELECT * FROM {TABLAS['ebitda']} WHERE centro_id = :id")
-        df = pd.read_sql(query, engine, params={"id": centro_id})
-        
-        for col in df.select_dtypes(include=['datetime64']).columns:
-            df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-        return {
-            "centro": centro_id,
-            "tabla": TABLAS['ebitda'],
-            "data": df.to_dict(orient="records")
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
-
-@app.get("/api/indicadores/{centro_id}")
-async def get_indicadores(centro_id: str):
-    """Datos de indicadores desde tabla Proyeccion_Indicadores en db360"""
-    try:
-        engine = get_db_engine()
-        if not engine:
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        
-        query = text(f"SELECT * FROM {TABLAS['indicadores']} WHERE centro_id = :id")
-        df = pd.read_sql(query, engine, params={"id": centro_id})
-        
-        for col in df.select_dtypes(include=['datetime64']).columns:
-            df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-        return {
-            "centro": centro_id,
-            "tabla": TABLAS['indicadores'],
-            "data": df.to_dict(orient="records")
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @app.get("/api/poblacion/{centro_id}")
-async def get_poblacion(centro_id: str):
-    """Datos de población desde tabla Poblacion_Estudiantil en db360"""
+async def get_poblacion_estudiantil(centro_id: str):
+    """
+    Obtiene datos de población estudiantil para un centro específico
+    desde la tabla dbo.Poblacion_Estudiantil en db360
+    """
     try:
+        # Obtener conexión a la base de datos
         engine = get_db_engine()
         if not engine:
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+            raise HTTPException(
+                status_code=503, 
+                detail="No se pudo conectar a la base de datos db360"
+            )
         
-        query = text(f"SELECT * FROM {TABLAS['poblacion']} WHERE centro_id = :id")
+        print(f"Consultando {DB_TABLA} para centro {centro_id}")
+        
+        # Consulta específica para la tabla Poblacion_Estudiantil
+        # El uso de :id previene SQL Injection
+        query = text(f"""
+            SELECT * FROM {DB_TABLA} 
+            WHERE centro_id = :id 
+            ORDER BY periodo DESC
+        """)
+        
         df = pd.read_sql(query, engine, params={"id": centro_id})
         
+        # Convertir columnas datetime a string para JSON
         for col in df.select_dtypes(include=['datetime64']).columns:
             df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-        return {
+        
+        # Preparar respuesta
+        response = {
             "centro": centro_id,
-            "tabla": TABLAS['poblacion'],
-            "data": df.to_dict(orient="records")
+            "base_datos": DB_NAME,
+            "tabla": DB_TABLA,
+            "total_registros": len(df),
+            "data": df.to_dict(orient="records"),
+            "timestamp": pd.Timestamp.now().isoformat()
         }
         
+        return response
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+        print(f"Error en consulta: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al consultar datos: {str(e)}"
+        )
 
-@app.get("/api/estudiantes/{centro_id}")
-async def get_estudiantes(centro_id: str):
-    """Proyección estudiantes desde tabla Proyeccion_Estudiantes en db360"""
+@app.get("/api/poblacion")
+async def get_todos_los_centros():
+    """
+    Obtiene todos los registros de población estudiantil (sin filtrar por centro)
+    Útil para exploración inicial o para obtener lista de centros disponibles
+    """
     try:
         engine = get_db_engine()
         if not engine:
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+            raise HTTPException(
+                status_code=503, 
+                detail="No se pudo conectar a la base de datos db360"
+            )
         
-        query = text(f"SELECT * FROM {TABLAS['estudiantes']} WHERE centro_id = :id")
-        df = pd.read_sql(query, engine, params={"id": centro_id})
+        print(f"Consultando todos los registros de {DB_TABLA}")
         
+        query = text(f"SELECT * FROM {DB_TABLA} ORDER BY centro_id, periodo DESC")
+        df = pd.read_sql(query, engine)
+        
+        # Convertir columnas datetime a string
         for col in df.select_dtypes(include=['datetime64']).columns:
             df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-        return {
-            "centro": centro_id,
-            "tabla": TABLAS['estudiantes'],
-            "data": df.to_dict(orient="records")
+        
+        # Obtener lista de centros únicos
+        centros_unicos = df['centro_id'].unique().tolist() if 'centro_id' in df.columns else []
+        
+        response = {
+            "base_datos": DB_NAME,
+            "tabla": DB_TABLA,
+            "total_registros": len(df),
+            "centros_disponibles": centros_unicos,
+            "data": df.to_dict(orient="records"),
+            "timestamp": pd.Timestamp.now().isoformat()
         }
         
+        return response
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+        print(f"Error en consulta: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al consultar datos: {str(e)}"
+        )
 
-@app.get("/api/desercion/{centro_id}")
-async def get_desercion(centro_id: str):
-    """Resumen deserción desde tabla Desercion_Resumenes_CU en db360"""
+@app.get("/api/poblacion/centros")
+async def get_centros_disponibles():
+    """
+    Obtiene la lista de centros disponibles en la tabla Poblacion_Estudiantil
+    """
     try:
         engine = get_db_engine()
         if not engine:
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+            raise HTTPException(
+                status_code=503, 
+                detail="No se pudo conectar a la base de datos db360"
+            )
         
-        query = text(f"SELECT * FROM {TABLAS['desercion']} WHERE centro_id = :id")
-        df = pd.read_sql(query, engine, params={"id": centro_id})
+        print(f"Obteniendo centros disponibles de {DB_TABLA}")
         
-        for col in df.select_dtypes(include=['datetime64']).columns:
-            df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
+        query = text(f"SELECT DISTINCT centro_id FROM {DB_TABLA} ORDER BY centro_id")
+        df = pd.read_sql(query, engine)
+        
+        centros = df['centro_id'].tolist() if not df.empty else []
+        
         return {
-            "centro": centro_id,
-            "tabla": TABLAS['desercion'],
-            "data": df.to_dict(orient="records")
+            "base_datos": DB_NAME,
+            "tabla": DB_TABLA,
+            "total_centros": len(centros),
+            "centros": centros,
+            "timestamp": pd.Timestamp.now().isoformat()
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
-
-# Endpoint para consulta personalizada (con precaución)
-@app.get("/api/consulta/{tabla}/{centro_id}")
-async def consulta_tabla(tabla: str, centro_id: str):
-    """Endpoint genérico para consultar cualquier tabla por centro_id"""
-    if tabla not in TABLAS:
-        raise HTTPException(status_code=404, detail=f"Tabla {tabla} no encontrada")
-    
-    try:
-        engine = get_db_engine()
-        if not engine:
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        
-        nombre_tabla = TABLAS[tabla]
-        query = text(f"SELECT * FROM {nombre_tabla} WHERE centro_id = :id")
-        df = pd.read_sql(query, engine, params={"id": centro_id})
-        
-        for col in df.select_dtypes(include=['datetime64']).columns:
-            df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-        return {
-            "centro": centro_id,
-            "tabla": nombre_tabla,
-            "data": df.to_dict(orient="records")
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+        print(f"Error en consulta: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al consultar centros: {str(e)}"
+        )
 
 # Endpoint para ver estado del caché de conexión
 @app.get("/admin/connection-status")
@@ -325,6 +249,7 @@ async def connection_status():
     return {
         "conexion_activa": _engine_cache is not None,
         "base_datos": DB_NAME,
+        "tabla": DB_TABLA,
         "servidor": DB_SERVER
     }
 
@@ -340,7 +265,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"Servidor SQL: {DB_SERVER}:{DB_PORT}")
     print(f"Base de datos: {DB_NAME}")
-    print(f"Tablas disponibles: {len(TABLAS)}")
+    print(f"Tabla: {DB_TABLA}")
     print(f"Usuario: {DB_USER}")
     print(f"Origenes permitidos: {len(ORIGENES_PERMITIDOS)}")
     print(f"Puerto: {port}")
