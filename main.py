@@ -3,7 +3,7 @@ import time
 import traceback
 import socket
 import urllib.parse
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
@@ -16,9 +16,9 @@ DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
 DB_PORT = os.getenv("DB_PORT", "1433")
 DB_NAME = "db360"
-DB_DRIVER = os.getenv("DB_DRIVER", "pymssql")
+DB_DRIVER = os.getenv("DB_DRIVER", "pymssql")  # pymssql por defecto
 
-# Mostrar configuración
+# Mostrar configuración inicial (sin contraseña)
 print("=" * 60)
 print("CONFIGURACION DE LA API")
 print("=" * 60)
@@ -31,11 +31,9 @@ print(f"DB_PASS: {'*' * len(DB_PASS) if DB_PASS else 'NO CONFIGURADA'}")
 print("=" * 60)
 
 if not all([DB_SERVER, DB_USER, DB_PASS]):
-    print("ERROR CRITICO: Faltan credenciales")
     raise ValueError("Faltan credenciales críticas en el entorno")
-else:
-    print("Credenciales basicas configuradas correctamente")
 
+# Orígenes permitidos (CORS)
 ORIGENES_PERMITIDOS = [
     "http://localhost:5173",
     "http://localhost:3000",
@@ -43,6 +41,7 @@ ORIGENES_PERMITIDOS = [
 ]
 print(f"Origenes permitidos: {ORIGENES_PERMITIDOS}")
 
+# Crear app FastAPI
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 app.add_middleware(
@@ -53,6 +52,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Variables de estado de conexión (se llenan bajo demanda)
 _engine_cache = None
 _ultima_conexion = None
 _total_conexiones = 0
@@ -60,6 +60,7 @@ _conexiones_fallidas = 0
 _ultimo_error = None
 
 def get_connection_string():
+    """Construye la cadena de conexión escapando la contraseña si es necesario."""
     if DB_DRIVER == "pyodbc":
         params = urllib.parse.quote_plus(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
@@ -71,19 +72,26 @@ def get_connection_string():
         )
         return f"mssql+pyodbc:///?odbc_connect={params}"
     else:
-        return f"mssql+pymssql://{DB_USER}:{DB_PASS}@{DB_SERVER}:{DB_PORT}/{DB_NAME}"
+        # Escapar caracteres especiales en la contraseña para pymssql
+        password_escaped = urllib.parse.quote_plus(DB_PASS)
+        return f"mssql+pymssql://{DB_USER}:{password_escaped}@{DB_SERVER}:{DB_PORT}/{DB_NAME}"
 
 def conectar_bd():
+    """Establece conexión con la BD (solo si no hay una activa o falló)."""
     global _engine_cache, _ultima_conexion, _total_conexiones, _conexiones_fallidas, _ultimo_error
 
-    print("\nIntentando conectar a la base de datos...")
+    # Si ya hay engine, verificar que siga vivo
+    if _engine_cache is not None:
+        try:
+            with _engine_cache.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return _engine_cache
+        except Exception:
+            # Conexión muerta, se procede a crear una nueva
+            _engine_cache = None
 
+    print("\n🔌 Intentando conectar a la base de datos...")
     try:
-        print(f"   Servidor: {DB_SERVER}:{DB_PORT}")
-        print(f"   Base datos: {DB_NAME}")
-        print(f"   Usuario: {DB_USER}")
-        print(f"   Driver: {DB_DRIVER}")
-
         start_time = time.time()
         connection_string = get_connection_string()
         conn_str_debug = connection_string.replace(DB_PASS, '*' * len(DB_PASS))
@@ -108,50 +116,37 @@ def conectar_bd():
             echo=False
         )
 
-        print("   Probando conexion con SELECT 1...")
-        test_start = time.time()
+        # Probar conexión con SELECT 1
         with engine.connect() as conn:
-            test_result = conn.execute(text("SELECT 1")).scalar()
-        test_elapsed = time.time() - test_start
-        print(f"   Prueba de conexion exitosa en {test_elapsed:.2f}s (resultado: {test_result})")
+            conn.execute(text("SELECT 1")).scalar()
 
         _engine_cache = engine
         _ultima_conexion = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
         _ultimo_error = None
 
-        total_elapsed = time.time() - start_time
-        print("\n" + "=" * 60)
-        print("CONEXION ESTABLECIDA EXITOSAMENTE")
-        print("=" * 60)
-        print(f"Servidor: {DB_SERVER}")
-        print(f"Base de datos: {DB_NAME}")
-        print(f"Usuario: {DB_USER}")
-        print(f"Puerto: {DB_PORT}")
-        print(f"Driver: {DB_DRIVER}")
-        print(f"Tiempo de conexion: {total_elapsed:.2f}s")
-        print(f"Conexiones exitosas totales: {_total_conexiones}")
-        print("=" * 60 + "\n")
-
+        elapsed = time.time() - start_time
+        print(f"   ✅ CONEXIÓN ESTABLECIDA en {elapsed:.2f}s")
         return engine
 
     except Exception as e:
         elapsed = time.time() - start_time if 'start_time' in locals() else 0
-        error_msg = str(e)
-        _ultimo_error = error_msg
-        print(f"\nERROR DE CONEXION despues de {elapsed:.2f}s")
-        print(f"Error: {error_msg}")
+        _ultimo_error = str(e)
+        print(f"   ❌ ERROR DE CONEXIÓN: {_ultimo_error}")
         traceback.print_exc()
-
         _conexiones_fallidas += 1
         return None
 
+# --- Endpoints ---
+
 @app.get("/")
 async def root():
-    return {"message": "API funcionando", "status": "ok"}
+    """Endpoint raíz para verificar que la API responde."""
+    return {"message": "API funcionando correctamente"}
 
 @app.get("/health")
-async def health_check():
+async def health():
+    """Health check que también intenta conectar a la BD si no hay conexión."""
     if _engine_cache is None:
         conectar_bd()
     if _engine_cache:
@@ -161,6 +156,7 @@ async def health_check():
 
 @app.get("/api/connection-status")
 async def connection_status():
+    """Muestra el estado detallado de la conexión a la BD."""
     if _engine_cache is None:
         conectar_bd()
     return {
@@ -177,6 +173,7 @@ async def connection_status():
 
 @app.get("/api/diagnostico")
 async def diagnostico():
+    """Pruebas de red y BD para diagnosticar problemas."""
     resultados = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "servidor": DB_SERVER,
@@ -185,12 +182,14 @@ async def diagnostico():
         "pruebas": {}
     }
 
+    # DNS
     try:
         ip = socket.gethostbyname(DB_SERVER)
         resultados["pruebas"]["dns"] = {"exito": True, "ip": ip}
     except Exception as e:
         resultados["pruebas"]["dns"] = {"exito": False, "error": str(e)}
 
+    # TCP
     if resultados["pruebas"].get("dns", {}).get("exito"):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -201,6 +200,7 @@ async def diagnostico():
         except Exception as e:
             resultados["pruebas"]["tcp"] = {"exito": False, "error": str(e)}
 
+    # BD (SELECT 1)
     try:
         conn_str = get_connection_string()
         connect_args = {"timeout": 10} if DB_DRIVER == "pymssql" else {}
