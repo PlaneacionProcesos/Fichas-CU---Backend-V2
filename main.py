@@ -90,7 +90,7 @@ def conectar_bd():
             # Conexión muerta, se procede a crear una nueva
             _engine_cache = None
 
-    print("\n🔌 Intentando conectar a la base de datos...")
+    print("\n Intentando conectar a la base de datos...")
     try:
         start_time = time.time()
         connection_string = get_connection_string()
@@ -126,13 +126,13 @@ def conectar_bd():
         _ultimo_error = None
 
         elapsed = time.time() - start_time
-        print(f"   ✅ CONEXIÓN ESTABLECIDA en {elapsed:.2f}s")
+        print(f"   CONEXIÓN ESTABLECIDA en {elapsed:.2f}s")
         return engine
 
     except Exception as e:
         elapsed = time.time() - start_time if 'start_time' in locals() else 0
         _ultimo_error = str(e)
-        print(f"   ❌ ERROR DE CONEXIÓN: {_ultimo_error}")
+        print(f"    ERROR DE CONEXIÓN: {_ultimo_error}")
         traceback.print_exc()
         _conexiones_fallidas += 1
         return None
