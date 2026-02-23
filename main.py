@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 
-# 1. Cargar variables de entorno
+# Cargar variables de entorno
 load_dotenv()
 
 DB_SERVER = os.getenv("DB_SERVER")
@@ -18,7 +18,7 @@ DB_PORT = os.getenv("DB_PORT", "1433")
 DB_NAME = "db360"
 DB_DRIVER = os.getenv("DB_DRIVER", "pymssql")
 
-# Mostrar configuración al iniciar (sin contraseña)
+# Mostrar configuración
 print("=" * 60)
 print("CONFIGURACION DE LA API")
 print("=" * 60)
@@ -36,7 +36,6 @@ if not all([DB_SERVER, DB_USER, DB_PASS]):
 else:
     print("Credenciales basicas configuradas correctamente")
 
-# 2. Configuración de Seguridad
 ORIGENES_PERMITIDOS = [
     "http://localhost:5173",
     "http://localhost:3000",
@@ -44,7 +43,6 @@ ORIGENES_PERMITIDOS = [
 ]
 print(f"Origenes permitidos: {ORIGENES_PERMITIDOS}")
 
-# 3. Crear aplicación FastAPI
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 app.add_middleware(
@@ -55,7 +53,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 4. Variables para almacenar el engine y errores
 _engine_cache = None
 _ultima_conexion = None
 _total_conexiones = 0
@@ -63,9 +60,7 @@ _conexiones_fallidas = 0
 _ultimo_error = None
 
 def get_connection_string():
-    """Construye la cadena de conexión según el driver seleccionado."""
     if DB_DRIVER == "pyodbc":
-        # Para pyodbc necesitas ODBC Driver 17 para SQL Server
         params = urllib.parse.quote_plus(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={DB_SERVER},{DB_PORT};"
@@ -76,14 +71,9 @@ def get_connection_string():
         )
         return f"mssql+pyodbc:///?odbc_connect={params}"
     else:
-        # pymssql por defecto
         return f"mssql+pymssql://{DB_USER}:{DB_PASS}@{DB_SERVER}:{DB_PORT}/{DB_NAME}"
 
 def conectar_bd():
-    """
-    Establece conexión con la base de datos db360 en Azure SQL.
-    Retorna el engine si tiene éxito, None en caso contrario.
-    """
     global _engine_cache, _ultima_conexion, _total_conexiones, _conexiones_fallidas, _ultimo_error
 
     print("\nIntentando conectar a la base de datos...")
@@ -95,14 +85,10 @@ def conectar_bd():
         print(f"   Driver: {DB_DRIVER}")
 
         start_time = time.time()
-
-        # Cadena de conexión
         connection_string = get_connection_string()
-        # Ofuscar contraseña para logs
         conn_str_debug = connection_string.replace(DB_PASS, '*' * len(DB_PASS))
         print(f"   Connection string: {conn_str_debug}")
 
-        # Parámetros comunes
         connect_args = {}
         if DB_DRIVER == "pymssql":
             connect_args = {
@@ -122,23 +108,19 @@ def conectar_bd():
             echo=False
         )
 
-        # Probar la conexión con SELECT 1
         print("   Probando conexion con SELECT 1...")
         test_start = time.time()
         with engine.connect() as conn:
             test_result = conn.execute(text("SELECT 1")).scalar()
-            test_elapsed = time.time() - test_start
-            print(f"   Prueba de conexion exitosa en {test_elapsed:.2f}s (resultado: {test_result})")
+        test_elapsed = time.time() - test_start
+        print(f"   Prueba de conexion exitosa en {test_elapsed:.2f}s (resultado: {test_result})")
 
-        # Guardar en caché
         _engine_cache = engine
         _ultima_conexion = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
         _ultimo_error = None
 
         total_elapsed = time.time() - start_time
-
-        # Mensaje de éxito
         print("\n" + "=" * 60)
         print("CONEXION ESTABLECIDA EXITOSAMENTE")
         print("=" * 60)
@@ -164,30 +146,21 @@ def conectar_bd():
         _conexiones_fallidas += 1
         return None
 
-# 5. Endpoints de monitoreo
 @app.get("/")
 async def root():
-    """Redirige a health check"""
-    return {"message": "API funcionando. Prueba /health o /api/connection-status"}
+    return {"message": "API funcionando", "status": "ok"}
 
 @app.get("/health")
 async def health_check():
-    """Endpoint de salud que muestra estado de conexión y último error"""
-    global _engine_cache
     if _engine_cache is None:
         conectar_bd()
     if _engine_cache:
         return {"status": "ok", "conexion": "establecida"}
     else:
-        return {
-            "status": "error",
-            "conexion": "no establecida",
-            "ultimo_error": _ultimo_error
-        }
+        return {"status": "error", "conexion": "no establecida", "ultimo_error": _ultimo_error}
 
 @app.get("/api/connection-status")
 async def connection_status():
-    global _engine_cache
     if _engine_cache is None:
         conectar_bd()
     return {
@@ -204,9 +177,6 @@ async def connection_status():
 
 @app.get("/api/diagnostico")
 async def diagnostico():
-    """Realiza pruebas de red y conexión para diagnosticar problemas."""
-    # Nota: para usar dns.resolver necesitas instalar dnspython
-    # Si no está instalado, comenta esa parte o usa socket.gethostbyname
     resultados = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "servidor": DB_SERVER,
@@ -215,79 +185,33 @@ async def diagnostico():
         "pruebas": {}
     }
 
-    # 1. Resolución DNS
     try:
-        start = time.time()
         ip = socket.gethostbyname(DB_SERVER)
-        elapsed = time.time() - start
-        resultados["pruebas"]["dns"] = {
-            "exito": True,
-            "ip": ip,
-            "tiempo_ms": round(elapsed * 1000, 2)
-        }
+        resultados["pruebas"]["dns"] = {"exito": True, "ip": ip}
     except Exception as e:
-        resultados["pruebas"]["dns"] = {
-            "exito": False,
-            "error": str(e)
-        }
+        resultados["pruebas"]["dns"] = {"exito": False, "error": str(e)}
 
-    # 2. Conexión TCP al puerto
-    if "ip" in resultados["pruebas"].get("dns", {}):
+    if resultados["pruebas"].get("dns", {}).get("exito"):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5)
-            start = time.time()
-            sock.connect((resultados["pruebas"]["dns"]["ip"], int(DB_PORT)))
-            elapsed = time.time() - start
+            sock.connect((ip, int(DB_PORT)))
             sock.close()
-            resultados["pruebas"]["tcp"] = {
-                "exito": True,
-                "tiempo_ms": round(elapsed * 1000, 2)
-            }
+            resultados["pruebas"]["tcp"] = {"exito": True}
         except Exception as e:
-            resultados["pruebas"]["tcp"] = {
-                "exito": False,
-                "error": str(e)
-            }
+            resultados["pruebas"]["tcp"] = {"exito": False, "error": str(e)}
 
-    # 3. Prueba de conexión con la base de datos (SELECT 1)
     try:
-        # Usar una conexión nueva (no cacheada) para probar
-        connection_string = get_connection_string()
-        connect_args = {}
-        if DB_DRIVER == "pymssql":
-            connect_args = {"timeout": 10, "login_timeout": 10}
-        engine_test = create_engine(connection_string, connect_args=connect_args)
-        start = time.time()
+        conn_str = get_connection_string()
+        connect_args = {"timeout": 10} if DB_DRIVER == "pymssql" else {}
+        engine_test = create_engine(conn_str, connect_args=connect_args)
         with engine_test.connect() as conn:
-            result = conn.execute(text("SELECT 1")).scalar()
-        elapsed = time.time() - start
-        resultados["pruebas"]["bd_select"] = {
-            "exito": True,
-            "resultado": result,
-            "tiempo_ms": round(elapsed * 1000, 2)
-        }
+            conn.execute(text("SELECT 1")).scalar()
+        resultados["pruebas"]["bd_select"] = {"exito": True}
     except Exception as e:
-        resultados["pruebas"]["bd_select"] = {
-            "exito": False,
-            "error": str(e)
-        }
+        error_msg = str(e)
+        if DB_PASS and DB_PASS in error_msg:
+            error_msg = error_msg.replace(DB_PASS, '****')
+        resultados["pruebas"]["bd_select"] = {"exito": False, "error": error_msg}
 
     return resultados
-
-# 6. Ejecución con Uvicorn
-if __name__ == "__main__":
-    import uvicorn
-
-    # Intentar conectar al iniciar
-    engine = conectar_bd()
-    if engine:
-        print("API iniciada con conexion a base de datos")
-    else:
-        print("ADVERTENCIA: API iniciada SIN conexion a base de datos")
-
-    port = int(os.getenv("PORT", 8000))
-    reload_mode = False if os.getenv("RAILWAY_ENVIRONMENT") else True
-
-    print(f"\nIniciando servidor en puerto: {port} (host=0.0.0.0)")
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=reload_mode)
