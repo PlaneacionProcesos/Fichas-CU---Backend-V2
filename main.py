@@ -31,7 +31,7 @@ print(f"DB_PASS: {'*' * len(DB_PASS) if DB_PASS else 'NO CONFIGURADA'}")
 print("=" * 60)
 
 if not all([DB_SERVER, DB_USER, DB_PASS]):
-    raise ValueError("Faltan credenciales críticas en el entorno")
+    print ("Faltan credenciales críticas en el entorno")
 
 # Orígenes permitidos (CORS)
 ORIGENES_PERMITIDOS = [
