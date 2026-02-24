@@ -3,7 +3,7 @@ import time
 import traceback
 import socket
 import urllib.parse
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
@@ -17,6 +17,7 @@ DB_PASS = os.getenv("DB_PASS")
 DB_PORT = os.getenv("DB_PORT", "1433")
 DB_NAME = "db360"
 DB_DRIVER = os.getenv("DB_DRIVER", "pymssql")  # pymssql por defecto
+API_KEY_SECRETA = os.getenv("API_KEY_SECRET")   # Clave para autenticación
 
 # Mostrar configuración inicial (sin contraseña)
 print("=" * 60)
@@ -28,10 +29,11 @@ print(f"DB_PORT: {DB_PORT}")
 print(f"DB_NAME: {DB_NAME}")
 print(f"DB_DRIVER: {DB_DRIVER}")
 print(f"DB_PASS: {'*' * len(DB_PASS) if DB_PASS else 'NO CONFIGURADA'}")
+print(f"API_KEY_SECRETA: {'*' * len(API_KEY_SECRETA) if API_KEY_SECRETA else 'NO CONFIGURADA'}")
 print("=" * 60)
 
-if not all([DB_SERVER, DB_USER, DB_PASS]):
-    print ("Faltan credenciales críticas en el entorno")
+if not all([DB_SERVER, DB_USER, DB_PASS, API_KEY_SECRETA]):
+    raise ValueError("Faltan credenciales críticas en el entorno")
 
 # Orígenes permitidos (CORS)
 ORIGENES_PERMITIDOS = [
@@ -41,7 +43,7 @@ ORIGENES_PERMITIDOS = [
 ]
 print(f"Origenes permitidos: {ORIGENES_PERMITIDOS}")
 
-# Crear app FastAPI
+# Crear app FastAPI sin documentación pública
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
 app.add_middleware(
@@ -59,6 +61,21 @@ _total_conexiones = 0
 _conexiones_fallidas = 0
 _ultimo_error = None
 
+# --------------------------------------
+# Dependencia de autenticación por API Key
+# --------------------------------------
+async def verificar_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
+    """
+    Valida que el header X-API-Key contenga la clave secreta configurada.
+    Si no coincide, lanza HTTP 403.
+    """
+    if x_api_key != API_KEY_SECRETA:
+        raise HTTPException(status_code=403, detail="Acceso no autorizado")
+    return x_api_key
+
+# --------------------------------------
+# Funciones de conexión a base de datos
+# --------------------------------------
 def get_connection_string():
     """Construye la cadena de conexión escapando la contraseña si es necesario."""
     if DB_DRIVER == "pyodbc":
@@ -137,16 +154,17 @@ def conectar_bd():
         _conexiones_fallidas += 1
         return None
 
-# --- Endpoints ---
-
+# --------------------------------------
+# Endpoints PÚBLICOS (sin autenticación)
+# --------------------------------------
 @app.get("/")
 async def root():
-    """Endpoint raíz para verificar que la API responde."""
+    """Endpoint raíz público para verificar que la API responde."""
     return {"message": "API funcionando correctamente"}
 
 @app.get("/health")
 async def health():
-    """Health check que también intenta conectar a la BD si no hay conexión."""
+    """Health check público."""
     if _engine_cache is None:
         conectar_bd()
     if _engine_cache:
@@ -154,9 +172,12 @@ async def health():
     else:
         return {"status": "error", "conexion": "no establecida", "ultimo_error": _ultimo_error}
 
+# --------------------------------------
+# Endpoints PRIVADOS (requieren API Key)
+# --------------------------------------
 @app.get("/api/connection-status")
-async def connection_status():
-    """Muestra el estado detallado de la conexión a la BD."""
+async def connection_status(api_key: str = Depends(verificar_api_key)):
+    """Muestra el estado detallado de la conexión a la BD (protegido)."""
     if _engine_cache is None:
         conectar_bd()
     return {
@@ -172,8 +193,8 @@ async def connection_status():
     }
 
 @app.get("/api/diagnostico")
-async def diagnostico():
-    """Pruebas de red y BD para diagnosticar problemas."""
+async def diagnostico(api_key: str = Depends(verificar_api_key)):
+    """Pruebas de red y BD para diagnosticar problemas (protegido)."""
     resultados = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "servidor": DB_SERVER,
@@ -215,3 +236,8 @@ async def diagnostico():
         resultados["pruebas"]["bd_select"] = {"exito": False, "error": error_msg}
 
     return resultados
+
+# Para ejecutar localmente (opcional)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
