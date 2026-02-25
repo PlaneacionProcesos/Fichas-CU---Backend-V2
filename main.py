@@ -91,12 +91,12 @@ def conectar_bd():
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
 # ============================================================================
 
-def query_indicators(engine, centro_id):
-    """Datos de la tabla Indicadores Proyecciones."""
+def query_proyecciones(engine, centro_id):
+    """Datos de proyección filtrados por Nombre Corto y Años."""
     query = text("""
-        SELECT [Nombre Corto] , [2025], [2026], [2027], [2028], [2029], [2030]
-        FROM [dbo].[Indicadores_Proyecciones]
-        WHERE [Nivel] = :centro_id
+        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
+        FROM [Indicadores_Proyecciones]
+        WHERE [Centro Universitario] = :centro_id
     """)
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
