@@ -90,19 +90,28 @@ def conectar_bd():
 # ============================================================================
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
 # ============================================================================
-
-def query_proyecciones(engine, centro_id):
-    """Datos de proyección filtrados por Nombre Corto y Años."""
+def query_indicators(engine, centro_id):
+    """Tabla 'Ancha': Nombre Corto y años como columnas"""
     query = text("""
         SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
-        FROM [Indicadores_Proyecciones]
+        FROM [dbo].[Indicadores_Proyecciones]
+        WHERE [Nivel] = :centro_id
+    """)
+    with engine.connect() as conn:
+        result = conn.execute(query, {"centro_id": centro_id})
+        return [dict(row) for row in result.mappings().all()]
+
+    """Tabla 'Larga': Años como datos en filas"""
+    query = text("""
+        SELECT [Nombre Corto], Año, Valor
+        FROM [Proyecciones_cu]
         WHERE [Centro Universitario] = :centro_id
     """)
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
-        rows = result.mappings().all()
-    return [dict(row) for row in rows]
-
+        return [dict(row) for row in result.mappings().all()]
+    
+    
 def query_student_summary(engine, centro_id):
     """Resumen de estudiantes para 2026 S1-Q1."""
     query = text("""
