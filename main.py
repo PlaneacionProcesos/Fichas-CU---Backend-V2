@@ -109,7 +109,7 @@ def query_indicators(engine, centro_id):
         # El centro_id lo buscamos con comodines para evitar fallos por espacios
         result = conn.execute(query, {"centro_id": f"%{centro_id}%"})
         rows = result.mappings().all()
-        return [dict(row) for row in rows]  return [dict(row) for row in result.mappings().all()]
+        return [dict(row) for row in rows]
 
 def query_proyecciones(engine, centro_id):
     """Trae los datos de la otra tabla usando Tipo de Información como nombre"""
