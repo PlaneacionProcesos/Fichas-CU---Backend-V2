@@ -90,23 +90,38 @@ def conectar_bd():
 # ============================================================================
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
 def query_indicators(engine, centro_id):
-    # 1. Limpiamos el ID que viene del front (ej: de 'centro-engativa' a 'engativa')
     nombre_limpio = centro_id.split('-')[-1].strip()
-    
+    # Seleccionamos las columnas con nombre corto y las de data específicamente
     query = text("""
         SELECT 
-            TRIM([Nombre Corto]) AS [Nombre Corto], 
-            TRIM([Indicador]) AS [Indicador],
-            [2025 ] AS [2025], [2026 ] AS [2026], [2027 ] AS [2027], 
-            [2028 ] AS [2028], [2029 ] AS [2030], [2030 ] AS [2030]
+            [Nombre Corto], 
+            [Indicador],
+            [2025 ] AS [ANIO_2025], 
+            [2026 ] AS [ANIO_2026], 
+            [2027 ] AS [ANIO_2027], 
+            [2028 ] AS [ANIO_2028], 
+            [2029 ] AS [ANIO_2029], 
+            [2030 ] AS [2030] 
         FROM [dbo].[Indicadores_Proyecciones]
-        WHERE [Nivel] LIKE :busqueda 
-          AND ([Nombre Corto] IS NOT NULL OR [Indicador] IS NOT NULL)
+        WHERE [Nivel] LIKE :busqueda
     """)
     with engine.connect() as conn:
         result = conn.execute(query, {"busqueda": f"%{nombre_limpio}%"})
-        return [dict(row) for row in result.mappings().all()]
-
+        rows = []
+        for row in result.mappings().all():
+            d = dict(row)
+            # Mapeamos los alias ANIO_ al formato que espera el front
+            rows.append({
+                "Nombre Corto": d.get("Nombre Corto"),
+                "Indicador": d.get("Indicador"),
+                "2025": d.get("ANIO_2025"),
+                "2026": d.get("ANIO_2026"),
+                "2027": d.get("ANIO_2027"),
+                "2028": d.get("ANIO_2028"),
+                "2029": d.get("ANIO_2029"),
+                "2030": d.get("ANIO_2030")
+            })
+        return rows
 def query_student_summary(engine, centro_id):
     # También usamos LIKE aquí por si el nombre en esta tabla es distinto
     nombre_limpio = centro_id.split('-')[-1].strip()
