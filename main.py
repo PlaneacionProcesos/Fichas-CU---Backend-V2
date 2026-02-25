@@ -110,8 +110,21 @@ def query_indicators(engine, centro_id):
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
         return [dict(row) for row in result.mappings().all()]
-    
-    
+
+ def query_proyecciones(engine, centro_id):
+    """Consulta usando las columnas reales de Proyecciones_cu"""
+    query = text("""
+        SELECT 
+            [Tipo de Información] as [Nombre Corto], 
+            [Año], 
+            [Valor]
+        FROM [Proyecciones_cu]
+        WHERE [Centro Universitario] = :centro_id
+    """)
+    with engine.connect() as conn:
+        result = conn.execute(query, {"centro_id": centro_id})
+        return [dict(row) for row in result.mappings().all()]   
+
 def query_student_summary(engine, centro_id):
     """Resumen de estudiantes para 2026 S1-Q1."""
     query = text("""
