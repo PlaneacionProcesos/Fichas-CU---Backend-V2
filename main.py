@@ -111,7 +111,7 @@ def query_indicators(engine, centro_id):
         result = conn.execute(query, {"centro_id": centro_id})
         return [dict(row) for row in result.mappings().all()]
 
- def query_proyecciones(engine, centro_id):
+def query_proyecciones(engine, centro_id):
     """Consulta usando las columnas reales de Proyecciones_cu"""
     query = text("""
         SELECT 
