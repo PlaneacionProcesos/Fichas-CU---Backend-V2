@@ -90,27 +90,22 @@ def conectar_bd():
 # ============================================================================
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
 def query_indicators(engine, centro_id):
-    """Trae todos los indicadores saltando filas vacías y limpiando nombres"""
+    # Usamos COALESCE para que si 'Nombre Corto' es nulo, intente usar 'Indicador'
+    # Así no perdemos filas que tengan data pero no nombre corto
     query = text("""
         SELECT 
-            TRIM([Nombre Corto]) AS [Nombre Corto], 
-            [2025 ] AS [2025], 
-            [2026 ] AS [2026], 
-            [2027 ] AS [2027], 
-            [2028 ] AS [2028], 
-            [2029 ] AS [2029], 
-            [2030 ] AS [2030]
+            TRIM(CAST([Nombre Corto] AS NVARCHAR(MAX))) AS [Nombre Corto],
+            TRIM(CAST([Indicador] AS NVARCHAR(MAX))) AS [Indicador],
+            [2025 ] AS [2025], [2026 ] AS [2026], [2027 ] AS [2027], 
+            [2028 ] AS [2028], [2029 ] AS [2029], [2030 ] AS [2030]
         FROM [dbo].[Indicadores_Proyecciones]
         WHERE [Nivel] LIKE :centro_id
-          AND [Nombre Corto] IS NOT NULL 
-          AND LEN(TRIM([Nombre Corto])) > 0
     """)
     with engine.connect() as conn:
-        # El centro_id lo buscamos con comodines para evitar fallos por espacios
-        result = conn.execute(query, {"centro_id": f"%{centro_id}%"})
-        rows = result.mappings().all()
-        return [dict(row) for row in rows]
-
+        # El centro_id va con % para que 'Engativá' encuentre 'Especial Minuto de Dios - Engativá'
+        result = conn.execute(query, {"centro_id": f"%{centro_id.split('-')[-1].strip()}%"})
+        return [dict(row) for row in result.mappings().all()]
+    
 def query_proyecciones(engine, centro_id):
     """Trae los datos de la otra tabla usando Tipo de Información como nombre"""
     query = text("""
