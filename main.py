@@ -90,42 +90,27 @@ def conectar_bd():
 # ============================================================================
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
 def query_indicators(engine, centro_id):
-    # Forzamos la lectura de las columnas con espacio que tienen la data
+    # 1. Limpiamos el ID que viene del front (ej: de 'centro-engativa' a 'engativa')
+    nombre_limpio = centro_id.split('-')[-1].strip()
+    
     query = text("""
         SELECT 
             TRIM([Nombre Corto]) AS [Nombre Corto], 
             TRIM([Indicador]) AS [Indicador],
-            [2025 ] AS [2025], 
-            [2026 ] AS [2026], 
-            [2027 ] AS [2027], 
-            [2028 ] AS [2028], 
-            [2029 ] AS [2029], 
-            [2030 ] AS [2030]
+            [2025 ] AS [2025], [2026 ] AS [2026], [2027 ] AS [2027], 
+            [2028 ] AS [2028], [2029 ] AS [2030], [2030 ] AS [2030]
         FROM [dbo].[Indicadores_Proyecciones]
-        WHERE [Nivel] LIKE :centro_id
+        WHERE [Nivel] LIKE :busqueda 
+          AND ([Nombre Corto] IS NOT NULL OR [Indicador] IS NOT NULL)
     """)
     with engine.connect() as conn:
-        # Buscamos por la parte final del nombre para asegurar match
-        busqueda = f"%{centro_id.split('-')[-1].strip()}%"
-        result = conn.execute(query, {"centro_id": busqueda})
+        result = conn.execute(query, {"busqueda": f"%{nombre_limpio}%"})
         return [dict(row) for row in result.mappings().all()]
-    
-def query_proyecciones(engine, centro_id):
-    """Trae los datos de la otra tabla usando Tipo de Información como nombre"""
-    query = text("""
-        SELECT 
-            [Tipo de Información] as [Nombre Corto], 
-            [Año], 
-            [Valor]
-        FROM [Proyecciones_cu]
-        WHERE [Centro Universitario] LIKE :centro_id
-    """)
-    with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": f"%{centro_id}%"})
-        return [dict(row) for row in result.mappings().all()]
-    
+
 def query_student_summary(engine, centro_id):
-    """Resumen de estudiantes para 2026 S1-Q1."""
+    # También usamos LIKE aquí por si el nombre en esta tabla es distinto
+    nombre_limpio = centro_id.split('-')[-1].strip()
+    
     query = text("""
         SELECT 
             SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as pregradoDistancia,
@@ -140,14 +125,13 @@ def query_student_summary(engine, centro_id):
             SUM(CASE WHEN Género = 'Hombre' THEN [Estudiantes Totales] ELSE 0 END) as hombres,
             SUM(CASE WHEN Género = 'Mujer' THEN [Estudiantes Totales] ELSE 0 END) as mujeres
         FROM Caracterizacion_Estudiantil
-        WHERE [Centro Universitario] = :centro_id 
+        WHERE [Centro Universitario] LIKE :busqueda 
           AND año = 2026 
-          AND periodicidad IN ('S1', 'Q1')
     """)
     with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
+        result = conn.execute(query, {"busqueda": f"%{nombre_limpio}%"})
         row = result.mappings().first()
-    return dict(row) if row else {}
+        return dict(row) if row else {}
 
 def query_proyecciones(engine, centro_id):
     """Datos de proyección de estudiantes."""
