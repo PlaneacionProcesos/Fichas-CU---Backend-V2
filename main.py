@@ -91,40 +91,34 @@ def conectar_bd():
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
 # ============================================================================
 def query_indicators(engine, centro_id):
-    """Tabla 'Ancha': Nombre Corto y años como columnas"""
+    """Trae los indicadores usando el nombre del Centro (Nivel)"""
     query = text("""
-        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
+        SELECT 
+            [Nombre Corto], 
+            [Indicador],
+            [2025], [2026], [2027], [2028], [2029], [2030]
         FROM [dbo].[Indicadores_Proyecciones]
-        WHERE [Nivel] = :centro_id
+        WHERE [Nivel] LIKE :centro_id
     """)
     with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
-        return [dict(row) for row in result.mappings().all()]
-
-    """Tabla 'Larga': Años como datos en filas"""
-    query = text("""
-        SELECT [Nombre Corto], Año, Valor
-        FROM [Proyecciones_cu]
-        WHERE [Centro Universitario] = :centro_id
-    """)
-    with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
+        # Usamos % para que coincida aunque tenga espacios extra
+        result = conn.execute(query, {"centro_id": f"%{centro_id}%"})
         return [dict(row) for row in result.mappings().all()]
 
 def query_proyecciones(engine, centro_id):
-    """Consulta usando las columnas reales de Proyecciones_cu"""
+    """Trae los datos de la otra tabla usando Tipo de Información como nombre"""
     query = text("""
         SELECT 
             [Tipo de Información] as [Nombre Corto], 
             [Año], 
             [Valor]
         FROM [Proyecciones_cu]
-        WHERE [Centro Universitario] = :centro_id
+        WHERE [Centro Universitario] LIKE :centro_id
     """)
     with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
-        return [dict(row) for row in result.mappings().all()]   
-
+        result = conn.execute(query, {"centro_id": f"%{centro_id}%"})
+        return [dict(row) for row in result.mappings().all()]
+    
 def query_student_summary(engine, centro_id):
     """Resumen de estudiantes para 2026 S1-Q1."""
     query = text("""
