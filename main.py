@@ -91,20 +91,18 @@ def conectar_bd():
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
 # ============================================================================
 def query_indicators(engine, centro_id):
-    """Trae los indicadores usando el nombre del Centro (Nivel)"""
+    """Solo trae registros que tengan un Nombre Corto asignado"""
     query = text("""
-        SELECT 
-            [Nombre Corto], 
-            [Indicador],
-            [2025], [2026], [2027], [2028], [2029], [2030]
+        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
         FROM [dbo].[Indicadores_Proyecciones]
         WHERE [Nivel] LIKE :centro_id
+          AND [Nombre Corto] IS NOT NULL
+          AND [Nombre Corto] <> ''
     """)
     with engine.connect() as conn:
-        # Usamos % para que coincida aunque tenga espacios extra
         result = conn.execute(query, {"centro_id": f"%{centro_id}%"})
         return [dict(row) for row in result.mappings().all()]
-
+    
 def query_proyecciones(engine, centro_id):
     """Trae los datos de la otra tabla usando Tipo de Información como nombre"""
     query = text("""
