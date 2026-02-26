@@ -88,22 +88,42 @@ def conectar_bd():
         return None
 
 # ============================================================================
-# FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
-def query_desercion(engine, centro_id):
+# FUNCIONES DE CONSULTA
+# ============================================================================
+
+def query_indicators(engine, centro_id):
     query = text("""
-        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
+        SELECT 
+            [Nombre Corto],
+            [2025], 
+            [2026], 
+            [2027], 
+            [2028], 
+            [2029],
+            [2030]
         FROM [dbo].[Indicadores_Proyecciones]
         WHERE [Nivel] = :centro_id
     """)
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
-        rows = result.mappings().all()
-
+        rows = []
+        for row in result.mappings().all():
+            d = dict(row)
+            rows.append({
+                "Nombre Corto": d.get("Nombre Corto"),
+                "2025": d.get("2025"),
+                "2026": d.get("2026"),
+                "2027": d.get("2027"),
+                "2028": d.get("2028"),
+                "2029": d.get("2029"),
+                "2030": d.get("2030")
+            })
+        return rows
 
 def query_student_summary(engine, centro_id):
-    # También usamos LIKE aquí por si el nombre en esta tabla es distinto
-    nombre_limpio = centro_id.split('-')[-1].strip()
-    
+    """
+    Resumen de estudiantes para el centro (año 2026). Usa LIKE para flexibilidad.
+    """
     query = text("""
         SELECT 
             SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as pregradoDistancia,
@@ -121,13 +141,14 @@ def query_student_summary(engine, centro_id):
         WHERE [Centro Universitario] LIKE :busqueda 
           AND año = 2026 
     """)
+    # Usamos LIKE para que coincida aunque el nombre no sea exacto
     with engine.connect() as conn:
-        result = conn.execute(query, {"busqueda": f"%{nombre_limpio}%"})
+        result = conn.execute(query, {"busqueda": f"%{centro_id}%"})
         row = result.mappings().first()
         return dict(row) if row else {}
 
 def query_proyecciones(engine, centro_id):
-    """Datos de proyección de estudiantes."""
+    """Datos de proyección financiera (ingresos, costos, etc.)."""
     query = text("""
         SELECT [Nivel Académico], Modalidad, Periodicidad, [Tipo de Estudiante], [Tipo de Información], Año, Valor
         FROM [Proyecciones_cu]
@@ -139,7 +160,9 @@ def query_proyecciones(engine, centro_id):
     return [dict(row) for row in rows]
 
 def query_desercion(engine, centro_id):
-    """Obtiene porcentajes de deserción desde Indicadores_Proyecciones para los nombres cortos específicos."""
+    """
+    (Opcional) Solo los indicadores de deserción, si se necesitan por separado.
+    """
     query = text("""
         SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
         FROM [Indicadores_Proyecciones]
@@ -152,14 +175,14 @@ def query_desercion(engine, centro_id):
     
     desercion = []
     for row in rows:
-        modalidad = "Presencial" if "Presencial" in row["nombre_corto"] else "Distancia"
-        for año in [2025,2026,2027,2028,2029,2030]:
+        modalidad = "Presencial" if "Presencial" in row["Nombre Corto"] else "Distancia"
+        for año in [2025, 2026, 2027, 2028, 2029, 2030]:
             valor = row[str(año)]
             if valor is not None:
                 desercion.append({
                     "año": str(año),
                     "modalidad": modalidad,
-                    "porcentaje": float(valor)  # asegurar que sea número
+                    "porcentaje": float(valor)
                 })
     return desercion
 
@@ -211,6 +234,7 @@ async def get_observatorio_completo(centro_id: str, api_key: str = Depends(verif
             "oferta": oferta
         }
     except Exception as e:
+        print(f"Error en endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 @app.get("/api/observatorio/page2/{centro_id}")
