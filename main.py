@@ -217,20 +217,27 @@ def query_desercion(engine, centro_id):
     desercion = []
 
     for row in rows:
-        modalidad = "Presencial" if "Presencial" in row["Nombre Corto"] else "Distancia"
         fila = normalizar_fila_indicadores(dict(row))
+
+        nombre_corto = fila.get("Nombre Corto")
+
+        modalidad = (
+            "Presencial"
+            if nombre_corto and "Presencial" in nombre_corto
+            else "Distancia"
+        )
 
         for año in ["2025", "2026", "2027", "2028", "2029", "2030"]:
             valor = fila.get(año)
-            if valor is not None:
+
+            if valor is not None and valor != "":
                 desercion.append({
                     "año": año,
                     "modalidad": modalidad,
-                    "porcentaje": float(valor)
+                    "porcentaje": valor 
                 })
 
     return desercion
-
 
 def query_oferta(engine, centro_id):
     query = text("""
@@ -255,9 +262,10 @@ async def root():
 
 @app.get("/health")
 async def health():
+    engine = conectar_bd()
     return {
         "status": "ok",
-        "conexion_bd": _engine_cache is not None,
+        "conexion_bd": engine is not None,
         "ultimo_error": _ultimo_error
     }
 
@@ -280,9 +288,17 @@ async def get_observatorio_completo(
             "oferta": query_oferta(engine, centro_id),
         }
 
+
     except Exception as e:
-        print(f"Error en endpoint: {e}")
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
+        print("🔥 ERROR REAL:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/observatorio/page2/{centro_id}")
+async def get_page2_data(
+    centro_id: str,
+    api_key: str = Depends(verificar_api_key)
+):
+    return await get_observatorio_completo(centro_id, api_key)
 
 # ============================================================================
 # RUN
