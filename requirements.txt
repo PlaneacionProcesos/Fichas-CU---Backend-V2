@@ -6,3 +6,4 @@ sqlalchemy
 python-dotenv
 pymssql
 dnspython
+pyodbc
