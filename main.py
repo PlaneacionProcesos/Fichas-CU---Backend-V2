@@ -1,17 +1,16 @@
 import os
 import time
-import urllib.parse
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
 from dotenv import load_dotenv
 
-# Cargar variables de entorno
+# ============================================================================
+# CARGAR VARIABLES DE ENTORNO
+# ============================================================================
 load_dotenv()
 
-# ============================================================================
-# CONFIGURACIÓN DESDE VARIABLES DE ENTORNO
-# ============================================================================
 DB_SERVER = os.getenv("DB_SERVER")
 DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
@@ -20,7 +19,7 @@ DB_NAME = os.getenv("DB_NAME", "db360")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
 
 if not all([DB_SERVER, DB_USER, DB_PASS, API_KEY_SECRETA]):
-    raise ValueError("Faltan variables de entorno críticas: DB_SERVER, DB_USER, DB_PASS, API_KEY_SECRET")
+    raise ValueError("Faltan variables de entorno críticas")
 
 # ============================================================================
 # SEGURIDAD
@@ -31,7 +30,7 @@ async def verificar_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
     return x_api_key
 
 # ============================================================================
-# APLICACIÓN FASTAPI
+# FASTAPI
 # ============================================================================
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -43,6 +42,7 @@ ORIGENES_PERMITIDOS = [
     "http://localhost:3000",
     "https://ficha-cu.vercel.app",
 ]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGENES_PERMITIDOS,
@@ -52,7 +52,7 @@ app.add_middleware(
 )
 
 # ============================================================================
-# CONEXIÓN BD
+# CONEXIÓN BD CON PYODBC (ESTABLE)
 # ============================================================================
 _engine_cache = None
 _ultima_conexion = None
@@ -62,6 +62,7 @@ _ultimo_error = None
 
 def conectar_bd():
     global _engine_cache, _ultima_conexion, _total_conexiones, _conexiones_fallidas, _ultimo_error
+
     if _engine_cache is not None:
         try:
             with _engine_cache.connect() as conn:
@@ -71,59 +72,94 @@ def conectar_bd():
             _engine_cache = None
 
     try:
-        password_escaped = urllib.parse.quote_plus(DB_PASS)
-        connection_string = f"mssql+pymssql://{DB_USER}:{password_escaped}@{DB_SERVER}:{DB_PORT}/{DB_NAME}"
-        engine = create_engine(connection_string, pool_pre_ping=True, pool_recycle=1800)
+        connection_url = URL.create(
+            "mssql+pyodbc",
+            username=DB_USER,
+            password=DB_PASS,
+            host=DB_SERVER,
+            port=DB_PORT,
+            database=DB_NAME,
+            query={
+                "driver": "ODBC Driver 18 for SQL Server",
+                "Encrypt": "yes",
+                "TrustServerCertificate": "no",
+            },
+        )
+
+        engine = create_engine(
+            connection_url,
+            pool_pre_ping=True,
+            pool_recycle=1800,
+            pool_size=5,
+            max_overflow=10,
+        )
+
         with engine.connect() as conn:
-            conn.execute(text("SELECT 1")).scalar()
+            conn.execute(text("SELECT 1"))
+
         _engine_cache = engine
         _ultima_conexion = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
         _ultimo_error = None
+
+        print("✅ Conexión a BD establecida correctamente")
         return engine
+
     except Exception as e:
         _ultimo_error = str(e)
         _conexiones_fallidas += 1
-        print(f"Error conectando a BD: {e}")
+        print(f"❌ Error conectando a BD: {e}")
         return None
 
 # ============================================================================
 # FUNCIONES DE CONSULTA
 # ============================================================================
 
+def normalizar_fila_indicadores(row):
+    """
+    Normaliza claves como '2030 ' -> '2030'
+    """
+    fila = {}
+    for key, value in row.items():
+        if key:
+            fila[key.strip()] = value
+    return fila
+
 def query_indicators(engine, centro_id):
     query = text("""
         SELECT 
             [Nombre Corto],
-            [2025], 
-            [2026], 
-            [2027], 
-            [2028], 
+            [2025],
+            [2026],
+            [2027],
+            [2028],
             [2029],
             [2030]
         FROM [dbo].[Indicadores_Proyecciones]
         WHERE [Nivel] = :centro_id
     """)
+
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
         rows = []
+
         for row in result.mappings().all():
-            d = dict(row)
+            fila = normalizar_fila_indicadores(dict(row))
+
             rows.append({
-                "Nombre Corto": d.get("Nombre Corto"),
-                "2025": d.get("2025"),
-                "2026": d.get("2026"),
-                "2027": d.get("2027"),
-                "2028": d.get("2028"),
-                "2029": d.get("2029"),
-                "2030": d.get("2030")
+                "Nombre Corto": fila.get("Nombre Corto"),
+                "2025": fila.get("2025"),
+                "2026": fila.get("2026"),
+                "2027": fila.get("2027"),
+                "2028": fila.get("2028"),
+                "2029": fila.get("2029"),
+                "2030": fila.get("2030")
             })
+
         return rows
 
+
 def query_student_summary(engine, centro_id):
-    """
-    Resumen de estudiantes para el centro (año 2026). Usa LIKE para flexibilidad.
-    """
     query = text("""
         SELECT 
             SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as pregradoDistancia,
@@ -139,110 +175,124 @@ def query_student_summary(engine, centro_id):
             SUM(CASE WHEN Género = 'Mujer' THEN [Estudiantes Totales] ELSE 0 END) as mujeres
         FROM Caracterizacion_Estudiantil
         WHERE [Centro Universitario] LIKE :busqueda 
-          AND año = 2026 
+          AND año = 2026
     """)
-    # Usamos LIKE para que coincida aunque el nombre no sea exacto
+
     with engine.connect() as conn:
         result = conn.execute(query, {"busqueda": f"%{centro_id}%"})
         row = result.mappings().first()
         return dict(row) if row else {}
 
+
 def query_proyecciones(engine, centro_id):
-    """Datos de proyección financiera (ingresos, costos, etc.)."""
     query = text("""
-        SELECT [Nivel Académico], Modalidad, Periodicidad, [Tipo de Estudiante], [Tipo de Información], Año, Valor
+        SELECT [Nivel Académico], Modalidad, Periodicidad,
+               [Tipo de Estudiante], [Tipo de Información], Año, Valor
         FROM [Proyecciones_cu]
         WHERE [Centro Universitario] = :centro_id
     """)
+
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
-        rows = result.mappings().all()
-    return [dict(row) for row in rows]
+        return [dict(row) for row in result.mappings().all()]
+
 
 def query_desercion(engine, centro_id):
-    """
-    (Opcional) Solo los indicadores de deserción, si se necesitan por separado.
-    """
     query = text("""
         SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
         FROM [Indicadores_Proyecciones]
         WHERE [Nivel] = :centro_id
           AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
     """)
+
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
         rows = result.mappings().all()
-    
+
     desercion = []
+
     for row in rows:
         modalidad = "Presencial" if "Presencial" in row["Nombre Corto"] else "Distancia"
-        for año in [2025, 2026, 2027, 2028, 2029, 2030]:
-            valor = row[str(año)]
+        fila = normalizar_fila_indicadores(dict(row))
+
+        for año in ["2025", "2026", "2027", "2028", "2029", "2030"]:
+            valor = fila.get(año)
             if valor is not None:
                 desercion.append({
-                    "año": str(año),
+                    "año": año,
                     "modalidad": modalidad,
                     "porcentaje": float(valor)
                 })
+
     return desercion
 
+
 def query_oferta(engine, centro_id):
-    """Datos de oferta académica."""
     query = text("""
-        SELECT año, Nivel, Modalidad, Periodicidad, COUNT(DISTINCT snies) as snies_unico
+        SELECT año, Nivel, Modalidad, Periodicidad,
+               COUNT(DISTINCT snies) as snies_unico
         FROM [dbo].[Poblacion Estudiantil]
         WHERE [Centro Universitario] = :centro_id
-        GROUP BY año, Nivel, modalidad, periodicidad
+        GROUP BY año, Nivel, Modalidad, Periodicidad
     """)
+
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
-        rows = result.mappings().all()
-    return [dict(row) for row in rows]
+        return [dict(row) for row in result.mappings().all()]
 
 # ============================================================================
-# ENDPOINTS PÚBLICOS
+# ENDPOINTS
 # ============================================================================
+
 @app.get("/")
 async def root():
-    return {"message": "API del Observatorio Uniminuto funcionando"}
+    return {"message": "API Observatorio funcionando correctamente"}
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "conexion_bd": _engine_cache is not None, "ultimo_error": _ultimo_error}
+    return {
+        "status": "ok",
+        "conexion_bd": _engine_cache is not None,
+        "ultimo_error": _ultimo_error
+    }
 
-# ============================================================================
-# ENDPOINT PROTEGIDO
-# ============================================================================
-@app.get("/api/observatorio/completo/{centro_id}")
-async def get_observatorio_completo(centro_id: str, api_key: str = Depends(verificar_api_key)):
+@app.get("/debug/{centro_id}")
+async def debug(centro_id: str):
     engine = conectar_bd()
+    return query_indicators(engine, centro_id)
+
+@app.get("/api/observatorio/completo/{centro_id}")
+async def get_observatorio_completo(
+    centro_id: str,
+    api_key: str = Depends(verificar_api_key)
+):
+    engine = conectar_bd()
+
     if not engine:
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
     try:
-        indicators = query_indicators(engine, centro_id)
-        studentSummary = query_student_summary(engine, centro_id)
-        proyecciones = query_proyecciones(engine, centro_id)
-        desercion = query_desercion(engine, centro_id)
-        oferta = query_oferta(engine, centro_id)
-
         return {
-            "indicators": indicators,
-            "studentSummary": studentSummary,
-            "proyecciones": proyecciones,
-            "desercion": desercion,
-            "oferta": oferta
+            "indicators": query_indicators(engine, centro_id),
+            "studentSummary": query_student_summary(engine, centro_id),
+            "proyecciones": query_proyecciones(engine, centro_id),
+            "desercion": query_desercion(engine, centro_id),
+            "oferta": query_oferta(engine, centro_id),
         }
+
     except Exception as e:
         print(f"Error en endpoint: {e}")
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 @app.get("/api/observatorio/page2/{centro_id}")
-async def get_page2_data(centro_id: str, api_key: str = Depends(verificar_api_key)):
+async def get_page2_data(
+    centro_id: str,
+    api_key: str = Depends(verificar_api_key)
+):
     return await get_observatorio_completo(centro_id)
 
 # ============================================================================
-# EJECUCIÓN
+# RUN
 # ============================================================================
 if __name__ == "__main__":
     import uvicorn
