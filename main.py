@@ -92,9 +92,9 @@ def conectar_bd():
 def query_desercion(engine, centro_id):
     query = text("""
         SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
-        FROM [Indicadores_Proyecciones]
+        FROM [dbo].[Indicadores_Proyecciones]
         WHERE [Nivel] = :centro_id
-          AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
+          AND [Nombre Corto]
     """)
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
