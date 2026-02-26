@@ -89,39 +89,30 @@ def conectar_bd():
 
 # ============================================================================
 # FUNCIONES DE CONSULTA (con filtro por [Centro Universitario])
-def query_indicators(engine, centro_id):
-    nombre_limpio = centro_id.split('-')[-1].strip()
-    # Seleccionamos las columnas con nombre corto y las de data específicamente
+def query_desercion(engine, centro_id):
     query = text("""
-        SELECT 
-            [Nombre Corto], 
-            [Indicador],
-            [2025 ] AS [ANIO_2025], 
-            [2026 ] AS [ANIO_2026], 
-            [2027 ] AS [ANIO_2027], 
-            [2028 ] AS [ANIO_2028], 
-            [2029 ] AS [ANIO_2029], 
-            [2030 ] AS [2030] 
-        FROM [dbo].[Indicadores_Proyecciones]
-        WHERE [Nivel] LIKE :busqueda
+        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
+        FROM [Indicadores_Proyecciones]
+        WHERE [Nivel] = :centro_id
+          AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
     """)
     with engine.connect() as conn:
-        result = conn.execute(query, {"busqueda": f"%{nombre_limpio}%"})
-        rows = []
-        for row in result.mappings().all():
-            d = dict(row)
-            # Mapeamos los alias ANIO_ al formato que espera el front
-            rows.append({
-                "Nombre Corto": d.get("Nombre Corto"),
-                "Indicador": d.get("Indicador"),
-                "2025": d.get("ANIO_2025"),
-                "2026": d.get("ANIO_2026"),
-                "2027": d.get("ANIO_2027"),
-                "2028": d.get("ANIO_2028"),
-                "2029": d.get("ANIO_2029"),
-                "2030": d.get("ANIO_2030")
-            })
-        return rows
+        result = conn.execute(query, {"centro_id": centro_id})
+        rows = result.mappings().all()
+    
+    desercion = []
+    for row in rows:
+        modalidad = "Presencial" if "Presencial" in row["Nombre Corto"] else "Distancia"
+        for año in [2025,2026,2027,2028,2029,2030]:
+            valor = row[str(año)]
+            if valor is not None:
+                desercion.append({
+                    "año": str(año),
+                    "modalidad": modalidad,
+                    "porcentaje": float(valor)
+                })
+    return desercion
+
 def query_student_summary(engine, centro_id):
     # También usamos LIKE aquí por si el nombre en esta tabla es distinto
     nombre_limpio = centro_id.split('-')[-1].strip()
