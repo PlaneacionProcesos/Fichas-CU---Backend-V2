@@ -94,24 +94,11 @@ def query_desercion(engine, centro_id):
         SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
         FROM [dbo].[Indicadores_Proyecciones]
         WHERE [Nivel] = :centro_id
-          AND [Nombre Corto]
     """)
     with engine.connect() as conn:
         result = conn.execute(query, {"centro_id": centro_id})
         rows = result.mappings().all()
-    
-    desercion = []
-    for row in rows:
-        modalidad = "Presencial" if "Presencial" in row["Nombre Corto"] else "Distancia"
-        for año in [2025,2026,2027,2028,2029,2030]:
-            valor = row[str(año)]
-            if valor is not None:
-                desercion.append({
-                    "año": str(año),
-                    "modalidad": modalidad,
-                    "porcentaje": float(valor)
-                })
-    return desercion
+
 
 def query_student_summary(engine, centro_id):
     # También usamos LIKE aquí por si el nombre en esta tabla es distinto
