@@ -3,7 +3,6 @@ import time
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import URL
 from dotenv import load_dotenv
 
 # ============================================================================
@@ -52,7 +51,7 @@ app.add_middleware(
 )
 
 # ============================================================================
-# CONEXIÓN BD CON PYODBC (ESTABLE)
+# CONEXIÓN BD CON PYMSSQL (COMPATIBLE RAILWAY)
 # ============================================================================
 _engine_cache = None
 _ultima_conexion = None
@@ -61,7 +60,8 @@ _conexiones_fallidas = 0
 _ultimo_error = None
 
 def conectar_bd():
-    global _engine_cache, _ultima_conexion, _total_conexiones, _conexiones_fallidas, _ultimo_error
+    global _engine_cache, _ultima_conexion
+    global _total_conexiones, _conexiones_fallidas, _ultimo_error
 
     if _engine_cache is not None:
         try:
@@ -72,26 +72,15 @@ def conectar_bd():
             _engine_cache = None
 
     try:
-        connection_url = URL.create(
-            "mssql+pyodbc",
-            username=DB_USER,
-            password=DB_PASS,
-            host=DB_SERVER,
-            port=DB_PORT,
-            database=DB_NAME,
-            query={
-                "driver": "ODBC Driver 18 for SQL Server",
-                "Encrypt": "yes",
-                "TrustServerCertificate": "no",
-            },
+        connection_string = (
+            f"mssql+pymssql://{DB_USER}:{DB_PASS}"
+            f"@{DB_SERVER}:{DB_PORT}/{DB_NAME}"
         )
 
         engine = create_engine(
-            connection_url,
+            connection_string,
             pool_pre_ping=True,
             pool_recycle=1800,
-            pool_size=5,
-            max_overflow=10,
         )
 
         with engine.connect() as conn:
@@ -112,18 +101,34 @@ def conectar_bd():
         return None
 
 # ============================================================================
-# FUNCIONES DE CONSULTA
+# NORMALIZACIÓN ROBUSTA
 # ============================================================================
 
 def normalizar_fila_indicadores(row):
     """
-    Normaliza claves como '2030 ' -> '2030'
+    Normaliza claves como:
+    '2030 ' -> '2030'
+    2030 -> '2030'
     """
     fila = {}
+
     for key, value in row.items():
-        if key:
-            fila[key.strip()] = value
+        if key is None:
+            continue
+
+        key_str = str(key).strip()
+
+        # Si es año numérico, asegurarlo como string limpio
+        if key_str.isdigit():
+            fila[key_str] = value
+        else:
+            fila[key_str] = value
+
     return fila
+
+# ============================================================================
+# CONSULTAS
+# ============================================================================
 
 def query_indicators(engine, centro_id):
     query = text("""
@@ -256,11 +261,6 @@ async def health():
         "ultimo_error": _ultimo_error
     }
 
-@app.get("/debug/{centro_id}")
-async def debug(centro_id: str):
-    engine = conectar_bd()
-    return query_indicators(engine, centro_id)
-
 @app.get("/api/observatorio/completo/{centro_id}")
 async def get_observatorio_completo(
     centro_id: str,
@@ -283,13 +283,6 @@ async def get_observatorio_completo(
     except Exception as e:
         print(f"Error en endpoint: {e}")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
-
-@app.get("/api/observatorio/page2/{centro_id}")
-async def get_page2_data(
-    centro_id: str,
-    api_key: str = Depends(verificar_api_key)
-):
-    return await get_observatorio_completo(centro_id)
 
 # ============================================================================
 # RUN
