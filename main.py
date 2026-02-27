@@ -111,7 +111,7 @@ def normalizar_fila_indicadores(row):
 
 def limpiar_centro_id(centro_id: str) -> str:
     """
-    Elimina espacios normales Y espacios no-break \xa0 (CHAR 160)
+    Elimina espacios normales Y espacios no-break \\xa0 (CHAR 160)
     que algunos valores tienen al final en la BD.
     """
     return centro_id.strip().replace('\xa0', '').strip()
@@ -159,29 +159,97 @@ def query_indicators(engine, centro_id):
 
 
 def query_student_summary(engine, centro_id):
+    """
+    Saca totales de estudiantes desde dbo.Poblacion Estudiantil.
+
+    Segmentación de Nivel Académico:
+      - Posgrado: Maestría, Especialización
+      - Pregrado: todo lo demás (Licenciatura, Profesional,
+                  Técnico Profesional, Tecnología, etc.)
+
+    Los géneros vienen de dbo.Caracterizacion_Estudiantil
+    usando la columna Género (con tilde).
+    """
     try:
-        centro_limpio = limpiar_centro_id(centro_id)
-        query = text("""
-            SELECT 
-                SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as pregradoDistancia,
-                SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as pregradoPresencial,
-                SUM(CASE WHEN nivel = 'Pregrado' THEN [Estudiantes Totales] ELSE 0 END) as pregradoTotal,
-                SUM(CASE WHEN nivel = 'Posgrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as posgradoDistancia,
-                SUM(CASE WHEN nivel = 'Posgrado' AND Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as posgradoPresencial,
-                SUM(CASE WHEN nivel = 'Posgrado' THEN [Estudiantes Totales] ELSE 0 END) as posgradoTotal,
-                SUM(CASE WHEN Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as totalGeneralDistancia,
-                SUM(CASE WHEN Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as totalGeneralPresencial,
-                SUM([Estudiantes Totales]) as totalGeneral,
-                SUM(CASE WHEN Género = 'Hombre' THEN [Estudiantes Totales] ELSE 0 END) as hombres,
-                SUM(CASE WHEN Género = 'Mujer' THEN [Estudiantes Totales] ELSE 0 END) as mujeres
-            FROM Caracterizacion_Estudiantil
-            WHERE [Centro Universitario] LIKE :busqueda 
+        # ── Totales por nivel académico y modalidad ──────────────────────────
+        query_poblacion = text("""
+            SELECT
+                SUM(CASE
+                    WHEN [Nivel] NOT IN ('Maestría', 'Especialización')
+                     AND [Modalidad] = 'Distancia'
+                    THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
+
+                SUM(CASE
+                    WHEN [Nivel] NOT IN ('Maestría', 'Especialización')
+                     AND [Modalidad] = 'Presencial'
+                    THEN [Estudiantes Totales] ELSE 0 END) AS pregradoPresencial,
+
+                SUM(CASE
+                    WHEN [Nivel] NOT IN ('Maestría', 'Especialización')
+                    THEN [Estudiantes Totales] ELSE 0 END) AS pregradoTotal,
+
+                SUM(CASE
+                    WHEN [Nivel] IN ('Maestría', 'Especialización')
+                     AND [Modalidad] = 'Distancia'
+                    THEN [Estudiantes Totales] ELSE 0 END) AS posgradoDistancia,
+
+                SUM(CASE
+                    WHEN [Nivel] IN ('Maestría', 'Especialización')
+                     AND [Modalidad] = 'Presencial'
+                    THEN [Estudiantes Totales] ELSE 0 END) AS posgradoPresencial,
+
+                SUM(CASE
+                    WHEN [Nivel] IN ('Maestría', 'Especialización')
+                    THEN [Estudiantes Totales] ELSE 0 END) AS posgradoTotal,
+
+                SUM(CASE
+                    WHEN [Modalidad] = 'Distancia'
+                    THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralDistancia,
+
+                SUM(CASE
+                    WHEN [Modalidad] = 'Presencial'
+                    THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralPresencial,
+
+                SUM([Estudiantes Totales]) AS totalGeneral
+
+            FROM [dbo].[Poblacion Estudiantil]
+            WHERE [Centro Universitario] = :centro_id
+        """)
+
+        # ── Géneros desde Caracterizacion_Estudiantil ────────────────────────
+        query_generos = text("""
+            SELECT
+                SUM(CASE WHEN [Género] = 'Hombre' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
+                SUM(CASE WHEN [Género] = 'Mujer'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
+            FROM [dbo].[Caracterizacion_Estudiantil]
+            WHERE [Centro Universitario] LIKE :busqueda
               AND año = 2026
         """)
+
         with engine.connect() as conn:
-            result = conn.execute(query, {"busqueda": f"%{centro_limpio}%"})
-            row = result.mappings().first()
-            return dict(row) if row else {}
+            # Ejecutar query de población
+            row_pob = conn.execute(
+                query_poblacion,
+                {"centro_id": centro_id}
+            ).mappings().first()
+
+            # Ejecutar query de géneros
+            row_gen = conn.execute(
+                query_generos,
+                {"busqueda": f"%{limpiar_centro_id(centro_id)}%"}
+            ).mappings().first()
+
+        resultado = dict(row_pob) if row_pob else {}
+        if row_gen:
+            resultado["hombres"] = row_gen["hombres"]
+            resultado["mujeres"] = row_gen["mujeres"]
+        else:
+            resultado["hombres"] = None
+            resultado["mujeres"] = None
+
+        print(f"query_student_summary -> {resultado}")
+        return resultado
+
     except Exception as e:
         print(f"❌ ERROR query_student_summary: {e}")
         return {}
