@@ -109,9 +109,62 @@ def normalizar_fila_indicadores(row):
         fila[key_str] = value
     return fila
 
+
+def normalizar_fila_proyecciones(row: dict) -> dict:
+    """
+    Convierte los nombres de columna de la tabla Proyecciones_cu
+    (con tildes, espacios y mayúsculas) a snake_case sin tildes,
+    para que el modelo JS pueda hacer búsquedas de forma consistente.
+
+    Mapeo:
+      Rectoría              → rectoria
+      Centro Universitario  → centro_universitario
+      Sede                  → sede
+      Nivel Académico       → nivel_academico
+      Nivel de Formación    → nivel_formacion
+      Facultad              → facultad
+      Periodicidad          → periodicidad
+      Modalidad             → modalidad
+      CECO                  → ceco
+      Snies                 → snies
+      Programa              → programa
+      Atributo              → atributo
+      Valor                 → valor
+      Tipo de Estudiante    → tipo_estudiante
+      Tipo de Información   → tipo_informacion
+      Periodo               → periodo
+      Año                   → año
+    """
+    MAPA = {
+        "Rectoría":             "rectoria",
+        "Centro Universitario": "centro_universitario",
+        "Sede":                 "sede",
+        "Nivel Académico":      "nivel_academico",
+        "Nivel de Formación":   "nivel_formacion",
+        "Facultad":             "facultad",
+        "Periodicidad":         "periodicidad",
+        "Modalidad":            "modalidad",
+        "CECO":                 "ceco",
+        "Snies":                "snies",
+        "Programa":             "programa",
+        "Atributo":             "atributo",
+        "Valor":                "valor",
+        "Tipo de Estudiante":   "tipo_estudiante",
+        "Tipo de Información":  "tipo_informacion",
+        "Periodo":              "periodo",
+        "Año":                  "año",
+    }
+    normalizado = {}
+    for key, value in row.items():
+        key_limpio = str(key).strip()
+        nueva_clave = MAPA.get(key_limpio, key_limpio.lower().replace(" ", "_"))
+        normalizado[nueva_clave] = value
+    return normalizado
+
+
 def limpiar_centro_id(centro_id: str) -> str:
     """
-    Elimina espacios normales Y espacios no-break \xa0 (CHAR 160)
+    Elimina espacios normales Y espacios no-break \\xa0 (CHAR 160)
     que algunos valores tienen al final en la BD.
     """
     return centro_id.strip().replace('\xa0', '').strip()
@@ -170,7 +223,6 @@ def query_student_summary(engine, centro_id):
     Ambas queries son FIJAS a Bogotá, independiente del centro seleccionado.
     """
     try:
-        # ── Totales por nivel y modalidad — siempre Rectoría Bogotá ──────────
         query_poblacion = text("""
             SELECT
                 SUM(CASE
@@ -217,7 +269,6 @@ def query_student_summary(engine, centro_id):
               AND [Cuatrimestre] IN ('S1', 'Q1')
         """)
 
-        # ── Géneros — siempre Rectoría Bogotá ────────────────────────────────
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes totales] ELSE 0 END) AS hombres,
@@ -227,7 +278,16 @@ def query_student_summary(engine, centro_id):
               AND [año] = 2026
         """)
 
+        # ── CORRECCIÓN: todo dentro del mismo bloque with ─────────────────
         with engine.connect() as conn:
+            debug = conn.execute(text("""
+                SELECT DISTINCT [Género], COUNT(*) as total
+                FROM [dbo].[Caracterizacion_Estudiantil]
+                WHERE [año] = 2026
+                GROUP BY [Género]
+            """)).mappings().all()
+            print(f"  DEBUG géneros distintos año=2026: {[dict(r) for r in debug]}")
+
             row_pob = conn.execute(query_poblacion).mappings().first()
             row_gen = conn.execute(query_generos).mappings().first()
 
@@ -251,16 +311,42 @@ def query_student_summary(engine, centro_id):
 
 
 def query_proyecciones(engine, centro_id):
+    """
+    Retorna todas las filas de Proyecciones_cu para el centro dado,
+    con los campos normalizados a snake_case para que el modelo JS
+    pueda filtrar directamente por nivel_academico, modalidad, etc.
+    """
     try:
         query = text("""
-            SELECT [Nivel Académico], Modalidad, Periodicidad,
-                   [Tipo de Estudiante], [Tipo de Información], Año, Valor
-            FROM [Proyecciones_cu]
+            SELECT
+                [Rectoría],
+                [Centro Universitario],
+                [Sede],
+                [Nivel Académico],
+                [Nivel de Formación],
+                [Facultad],
+                [Periodicidad],
+                [Modalidad],
+                [CECO],
+                [Snies],
+                [Programa],
+                [Atributo],
+                [Valor],
+                [Tipo de Estudiante],
+                [Tipo de Información],
+                [Periodo],
+                [Año]
+            FROM [dbo].[Proyecciones_cu]
             WHERE [Centro Universitario] = :centro_id
         """)
         with engine.connect() as conn:
             result = conn.execute(query, {"centro_id": centro_id})
-            return [dict(row) for row in result.mappings().all()]
+            rows = result.mappings().all()
+
+        normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
+        print(f"query_proyecciones -> filas retornadas: {len(normalizadas)}")
+        return normalizadas
+
     except Exception as e:
         print(f"❌ ERROR query_proyecciones: {e}")
         return []
@@ -293,23 +379,46 @@ def query_desercion(engine, centro_id):
                         "porcentaje": valor
                     })
         return desercion
+
     except Exception as e:
         print(f"❌ ERROR query_desercion: {e}")
         return []
 
 
 def query_oferta(engine, centro_id):
+    """
+    Retorna la oferta académica con snake_case para que el modelo JS
+    pueda filtrar por nivel_academico, modalidad y periodicidad.
+    """
     try:
         query = text("""
-            SELECT año, Nivel, Modalidad, Periodicidad,
-                   COUNT(DISTINCT snies) as snies_unico
+            SELECT
+                [año],
+                [Nivel]          AS nivel_academico,
+                [Modalidad]      AS modalidad,
+                [Periodicidad]   AS periodicidad,
+                COUNT(DISTINCT [snies]) AS snies_unico
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
-            GROUP BY año, Nivel, Modalidad, Periodicidad
+            GROUP BY [año], [Nivel], [Modalidad], [Periodicidad]
         """)
         with engine.connect() as conn:
             result = conn.execute(query, {"centro_id": centro_id})
-            return [dict(row) for row in result.mappings().all()]
+            rows = [dict(r) for r in result.mappings().all()]
+
+        # Aseguramos claves consistentes en minúscula
+        normalizadas = []
+        for r in rows:
+            normalizadas.append({
+                "año":             r.get("año"),
+                "nivel_academico": r.get("nivel_academico"),
+                "modalidad":       r.get("modalidad"),
+                "periodicidad":    r.get("periodicidad"),
+                "snies_unico":     r.get("snies_unico"),
+            })
+        print(f"query_oferta -> filas retornadas: {len(normalizadas)}")
+        return normalizadas
+
     except Exception as e:
         print(f"❌ ERROR query_oferta: {e}")
         return []
@@ -342,11 +451,11 @@ async def get_observatorio_completo(
 
     try:
         return {
-            "indicators": query_indicators(engine, centro_id),
+            "indicators":     query_indicators(engine, centro_id),
             "studentSummary": query_student_summary(engine, centro_id),
-            "proyecciones": query_proyecciones(engine, centro_id),
-            "desercion": query_desercion(engine, centro_id),
-            "oferta": query_oferta(engine, centro_id),
+            "proyecciones":   query_proyecciones(engine, centro_id),
+            "desercion":      query_desercion(engine, centro_id),
+            "oferta":         query_oferta(engine, centro_id),
         }
     except Exception as e:
         print("🔥 ERROR REAL:", e)
