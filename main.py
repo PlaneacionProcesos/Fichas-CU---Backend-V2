@@ -109,40 +109,33 @@ def normalizar_fila_indicadores(row):
         fila[key_str] = value
     return fila
 
+def limpiar_centro_id(centro_id: str) -> str:
+    """
+    Elimina espacios normales Y espacios no-break \xa0 (CHAR 160)
+    que algunos valores tienen al final en la BD.
+    """
+    return centro_id.strip().replace('\xa0', '').strip()
+
 # ============================================================================
 # CONSULTAS
 # ============================================================================
 
 def query_indicators(engine, centro_id):
     try:
+        centro_limpio = limpiar_centro_id(centro_id)
+        print(f"query_indicators -> centro_limpio='{centro_limpio}' largo={len(centro_limpio)}")
+
         with engine.connect() as conn:
-
-            # DEBUG: ver valores exactos en [Nivel] y comparar con centro_id
-            r = conn.execute(text("""
-                SELECT DISTINCT [Nivel], LEN([Nivel]) as largo
-                FROM [dbo].[Indicadores_Proyecciones]
-                WHERE [Nivel] IS NOT NULL
-            """))
-            print("=== VALORES EN [Nivel] ===")
-            for row in r:
-                valor = str(row[0]) if row[0] else ''
-                chars = [(c, ord(c)) for c in valor]
-                print(f"  BD='{valor}' largo={row[1]} chars={chars}")
-
-            print(f"=== centro_id recibido: '{centro_id}' largo={len(centro_id)} ===")
-            print(f"  chars={[(c, ord(c)) for c in centro_id]}")
-
-            # QUERY REAL
             result = conn.execute(text("""
                 SELECT
                     RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
                     [2025], [2026], [2027], [2028], [2029],
                     RTRIM(LTRIM([2030]))         AS [2030]
                 FROM [dbo].[Indicadores_Proyecciones]
-                WHERE RTRIM(LTRIM([Nivel])) = RTRIM(LTRIM(:nivel))
+                WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :nivel
                   AND [Nombre Corto] IS NOT NULL
                   AND RTRIM(LTRIM([Nombre Corto])) <> ''
-            """), {"nivel": centro_id.strip()})
+            """), {"nivel": centro_limpio})
 
             rows = []
             for row in result.mappings().all():
@@ -157,7 +150,7 @@ def query_indicators(engine, centro_id):
                     "2030": fila.get("2030")
                 })
 
-            print(f"=== Filas retornadas: {len(rows)} ===")
+            print(f"query_indicators -> filas retornadas: {len(rows)}")
             return rows
 
     except Exception as e:
@@ -167,6 +160,7 @@ def query_indicators(engine, centro_id):
 
 def query_student_summary(engine, centro_id):
     try:
+        centro_limpio = limpiar_centro_id(centro_id)
         query = text("""
             SELECT 
                 SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as pregradoDistancia,
@@ -185,7 +179,7 @@ def query_student_summary(engine, centro_id):
               AND año = 2026
         """)
         with engine.connect() as conn:
-            result = conn.execute(query, {"busqueda": f"%{centro_id.strip()}%"})
+            result = conn.execute(query, {"busqueda": f"%{centro_limpio}%"})
             row = result.mappings().first()
             return dict(row) if row else {}
     except Exception as e:
@@ -211,14 +205,15 @@ def query_proyecciones(engine, centro_id):
 
 def query_desercion(engine, centro_id):
     try:
+        centro_limpio = limpiar_centro_id(centro_id)
         query = text("""
             SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030 ]
             FROM [Indicadores_Proyecciones]
-            WHERE RTRIM(LTRIM([Nivel])) = RTRIM(LTRIM(:centro_id))
+            WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :centro_id
               AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
         """)
         with engine.connect() as conn:
-            result = conn.execute(query, {"centro_id": centro_id.strip()})
+            result = conn.execute(query, {"centro_id": centro_limpio})
             rows = result.mappings().all()
 
         desercion = []
