@@ -220,8 +220,8 @@ def query_student_summary(engine, centro_id):
         # ── Géneros — siempre Rectoría Bogotá ────────────────────────────────
         query_generos = text("""
             SELECT
-                SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
-                SUM(CASE WHEN [Género] = 'Femenino'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
+                SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes totales] ELSE 0 END) AS hombres,
+                SUM(CASE WHEN [Género] = 'Femenino'  THEN [Estudiantes totales] ELSE 0 END) AS mujeres
             FROM [dbo].[Caracterizacion_Estudiantil]
             WHERE [Rectoría] = 'Bogotá'
               AND [año] = 2026
