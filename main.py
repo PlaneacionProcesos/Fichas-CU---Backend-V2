@@ -160,20 +160,17 @@ def query_indicators(engine, centro_id):
 
 def query_student_summary(engine, centro_id):
     """
-    Totales de población desde dbo.Poblacion Estudiantil
-    filtrado por año=2026 y Cuatrimestre IN ('S1','Q1').
+    - Población (totales por nivel/modalidad): dbo.Poblacion Estudiantil
+      filtrado por [Rectoría] = 'Bogotá', año=2026, Cuatrimestre IN ('S1','Q1').
+      Segmentación: Posgrado = Maestría + Especialización, resto = Pregrado.
 
-    Segmentación:
-      Posgrado  -> Maestría, Especialización
-      Pregrado  -> todo lo demás
+    - Géneros: dbo.Caracterizacion_Estudiantil
+      filtrado por [Rectoría] = 'Bogotá', año=2026.
 
-    Géneros desde dbo.Caracterizacion_Estudiantil
-    columna Género (con tilde), año=2026.
+    Ambas queries son FIJAS a Bogotá, independiente del centro seleccionado.
     """
     try:
-        centro_limpio = limpiar_centro_id(centro_id)
-
-        # ── Totales por nivel y modalidad ─────────────────────────────────────
+        # ── Totales por nivel y modalidad — siempre Rectoría Bogotá ──────────
         query_poblacion = text("""
             SELECT
                 SUM(CASE
@@ -215,43 +212,35 @@ def query_student_summary(engine, centro_id):
                 SUM([Estudiantes Totales]) AS totalGeneral
 
             FROM [dbo].[Poblacion Estudiantil]
-            WHERE [Centro Universitario] = :centro_id
+            WHERE [Rectoría] = 'Bogotá'
               AND [año] = 2026
               AND [Cuatrimestre] IN ('S1', 'Q1')
         """)
 
-        # ── Géneros desde Caracterizacion_Estudiantil ─────────────────────────
-        # Usamos LIKE con el nombre limpio para tolerar variaciones de espacios
+        # ── Géneros — siempre Rectoría Bogotá ────────────────────────────────
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN [Género] = 'Hombre' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
                 SUM(CASE WHEN [Género] = 'Mujer'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
             FROM [dbo].[Caracterizacion_Estudiantil]
-            WHERE [Centro Universitario] LIKE :busqueda
+            WHERE [Rectoría] = 'Bogotá'
               AND [año] = 2026
         """)
 
         with engine.connect() as conn:
-            row_pob = conn.execute(
-                query_poblacion,
-                {"centro_id": centro_id}
-            ).mappings().first()
-
-            row_gen = conn.execute(
-                query_generos,
-                {"busqueda": f"%{centro_limpio}%"}
-            ).mappings().first()
+            row_pob = conn.execute(query_poblacion).mappings().first()
+            row_gen = conn.execute(query_generos).mappings().first()
 
         resultado = dict(row_pob) if row_pob else {}
 
         if row_gen:
             resultado["hombres"] = row_gen["hombres"]
             resultado["mujeres"] = row_gen["mujeres"]
-            print(f"  géneros -> hombres={row_gen['hombres']} mujeres={row_gen['mujeres']}")
+            print(f"  géneros Bogotá -> hombres={row_gen['hombres']} mujeres={row_gen['mujeres']}")
         else:
             resultado["hombres"] = None
             resultado["mujeres"] = None
-            print("  géneros -> sin resultados, verifica columna [Género] y año en Caracterizacion_Estudiantil")
+            print("  géneros -> sin resultados para Rectoría Bogotá año=2026")
 
         print(f"query_student_summary -> {resultado}")
         return resultado
