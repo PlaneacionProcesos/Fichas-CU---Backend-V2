@@ -135,22 +135,17 @@ def query_indicators(engine, centro_id):
         SELECT
             RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
             RTRIM(LTRIM([Nivel]))        AS [Nivel],
-            [2025],
-            [2026],
-            [2027],
-            [2028],
-            [2029],
+            [2025], [2026], [2027], [2028], [2029],
             RTRIM(LTRIM([2030]))         AS [2030]
         FROM [dbo].[Indicadores_Proyecciones]
-        WHERE RTRIM(LTRIM([Nivel])) = :nivel
+        WHERE RTRIM(LTRIM([Nivel])) = RTRIM(LTRIM(:nivel))
           AND RTRIM(LTRIM([Nombre Corto])) IS NOT NULL
           AND RTRIM(LTRIM([Nombre Corto])) <> ''
     """)
 
     with engine.connect() as conn:
-        result = conn.execute(query, {"nivel": centro_id})
+        result = conn.execute(query, {"nivel": centro_id.strip()})
         rows = []
-
         for row in result.mappings().all():
             fila = normalizar_fila_indicadores(dict(row))
             rows.append({
@@ -162,7 +157,7 @@ def query_indicators(engine, centro_id):
                 "2029": fila.get("2029"),
                 "2030": fila.get("2030")
             })
-
+        print(f"Filas encontradas para '{centro_id}': {len(rows)}")
         return rows
 
 
