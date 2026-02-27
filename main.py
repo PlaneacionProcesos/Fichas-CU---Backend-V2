@@ -132,25 +132,27 @@ def normalizar_fila_indicadores(row):
 
 def query_indicators(engine, centro_id):
     query = text("""
-        SELECT 
-            [Nombre Corto],
+        SELECT
+            RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
+            RTRIM(LTRIM([Nivel]))        AS [Nivel],
             [2025],
             [2026],
             [2027],
             [2028],
             [2029],
-            [2030]
+            RTRIM(LTRIM([2030]))         AS [2030]
         FROM [dbo].[Indicadores_Proyecciones]
-        WHERE [Nivel] = :centro_id
+        WHERE RTRIM(LTRIM([Nivel])) = :nivel
+          AND RTRIM(LTRIM([Nombre Corto])) IS NOT NULL
+          AND RTRIM(LTRIM([Nombre Corto])) <> ''
     """)
 
     with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
+        result = conn.execute(query, {"nivel": centro_id})
         rows = []
 
         for row in result.mappings().all():
             fila = normalizar_fila_indicadores(dict(row))
-
             rows.append({
                 "Nombre Corto": fila.get("Nombre Corto"),
                 "2025": fila.get("2025"),
@@ -204,7 +206,7 @@ def query_proyecciones(engine, centro_id):
 
 def query_desercion(engine, centro_id):
     query = text("""
-        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030]
+        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030 ]
         FROM [Indicadores_Proyecciones]
         WHERE [Nivel] = :centro_id
           AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
