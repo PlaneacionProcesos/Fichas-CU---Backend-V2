@@ -147,8 +147,27 @@ def normalizar_fila_proyecciones(row: dict) -> dict:
     return normalizado
 
 
+# Mapeo de centro_id del frontend al nombre exacto en la BD
+CENTRO_ID_MAPA = {
+    "centro-engativa":               "Especial Minuto de Dios - Engativ\u00e1",
+    "centro-kennedy":                "Kennedy",
+    "centro-santa-fe-las-cruces":    "Las Cruces - Santa Fe",
+    "centro-perdomo-ciudad-bolivar": "Perdomo - Ciudad Bol\u00edvar",
+    "centro-san-cristobal-usaquen":  "San Crist\u00f3bal Norte - Usaqu\u00e9n",
+}
+
+def resolver_centro_id(centro_id: str) -> str:
+    """
+    Convierte el centro_id del frontend (ej: 'centro-kennedy')
+    al nombre exacto que usa la BD (ej: 'Kennedy').
+    Si no est\u00e1 en el mapa, devuelve el valor limpio tal cual
+    por si ya viene con el nombre real.
+    """
+    limpio = centro_id.strip().replace("\xa0", "").strip()
+    return CENTRO_ID_MAPA.get(limpio, limpio)
+
 def limpiar_centro_id(centro_id: str) -> str:
-    return centro_id.strip().replace('\xa0', '').strip()
+    return centro_id.strip().replace("\xa0", "").strip()
 
 # ============================================================================
 # CONSULTAS
@@ -247,6 +266,7 @@ def query_proyecciones(engine, centro_id):
     y se suma Valor para consolidar los programas del centro.
     """
     try:
+        nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
                 [Nivel Académico],
@@ -270,7 +290,7 @@ def query_proyecciones(engine, centro_id):
                 [Año]
         """)
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": centro_id}).mappings().all()
+            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
 
         normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
         print(f"query_proyecciones -> filas: {len(normalizadas)}")
@@ -312,11 +332,12 @@ def query_matriculados_2026(engine, centro_id):
                 END,
                 [Modalidad]
         """)
+        nombre_bd = resolver_centro_id(centro_id)
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": centro_id}).mappings().all()
+            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
 
         resultado = [dict(r) for r in rows]
-        print(f"query_matriculados_2026 -> filas: {len(resultado)}")
+        print(f"query_matriculados_2026 -> centro='{nombre_bd}' filas: {len(resultado)}")
         return resultado
 
     except Exception as e:
@@ -354,6 +375,7 @@ def query_desercion(engine, centro_id):
 
 def query_oferta(engine, centro_id):
     try:
+        nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
                 [año],
@@ -366,7 +388,7 @@ def query_oferta(engine, centro_id):
             GROUP BY [año], [Nivel], [Modalidad], [Periodicidad]
         """)
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": centro_id}).mappings().all()
+            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
 
         return [
             {
