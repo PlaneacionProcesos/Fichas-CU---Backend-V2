@@ -51,7 +51,7 @@ app.add_middleware(
 )
 
 # ============================================================================
-# CONEXIÓN BD CON PYMSSQL (COMPATIBLE RAILWAY)
+# CONEXIÓN BD
 # ============================================================================
 _engine_cache = None
 _ultima_conexion = None
@@ -76,13 +76,11 @@ def conectar_bd():
             f"mssql+pymssql://{DB_USER}:{DB_PASS}"
             f"@{DB_SERVER}:{DB_PORT}/{DB_NAME}"
         )
-
         engine = create_engine(
             connection_string,
             pool_pre_ping=True,
             pool_recycle=1800,
         )
-
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
 
@@ -90,7 +88,6 @@ def conectar_bd():
         _ultima_conexion = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
         _ultimo_error = None
-
         print("✅ Conexión a BD establecida correctamente")
         return engine
 
@@ -101,29 +98,15 @@ def conectar_bd():
         return None
 
 # ============================================================================
-# NORMALIZACIÓN ROBUSTA
+# NORMALIZACIÓN
 # ============================================================================
-
 def normalizar_fila_indicadores(row):
-    """
-    Normaliza claves como:
-    '2030 ' -> '2030'
-    2030 -> '2030'
-    """
     fila = {}
-
     for key, value in row.items():
         if key is None:
             continue
-
         key_str = str(key).strip()
-
-        # Si es año numérico, asegurarlo como string limpio
-        if key_str.isdigit():
-            fila[key_str] = value
-        else:
-            fila[key_str] = value
-
+        fila[key_str] = value
     return fila
 
 # ============================================================================
@@ -131,115 +114,147 @@ def normalizar_fila_indicadores(row):
 # ============================================================================
 
 def query_indicators(engine, centro_id):
-    # DEBUG COMPLETO
-    with engine.connect() as conn:
-        # Ver todos los valores únicos de Nivel
-        r = conn.execute(text("""
-            SELECT DISTINCT [Nivel], LEN([Nivel]) as largo
-            FROM [dbo].[Indicadores_Proyecciones]
-            WHERE [Nivel] IS NOT NULL
-        """))
-        print("=== VALORES EN [Nivel] ===")
-        for row in r:
-            valor = row[0]
-            largo = row[1]
-            # Mostrar cada caracter y su código ASCII
-            chars = [(c, ord(c)) for c in str(valor)]
-            print(f"  '{valor}' largo={largo} chars={chars}")
-        
-        print(f"=== centro_id recibido ===")
-        print(f"  '{centro_id}' largo={len(centro_id)}")
-        chars_id = [(c, ord(c)) for c in centro_id]
-        print(f"  chars={chars_id}")
+    try:
+        with engine.connect() as conn:
+
+            # DEBUG: ver valores exactos en [Nivel] y comparar con centro_id
+            r = conn.execute(text("""
+                SELECT DISTINCT [Nivel], LEN([Nivel]) as largo
+                FROM [dbo].[Indicadores_Proyecciones]
+                WHERE [Nivel] IS NOT NULL
+            """))
+            print("=== VALORES EN [Nivel] ===")
+            for row in r:
+                valor = str(row[0]) if row[0] else ''
+                chars = [(c, ord(c)) for c in valor]
+                print(f"  BD='{valor}' largo={row[1]} chars={chars}")
+
+            print(f"=== centro_id recibido: '{centro_id}' largo={len(centro_id)} ===")
+            print(f"  chars={[(c, ord(c)) for c in centro_id]}")
+
+            # QUERY REAL
+            result = conn.execute(text("""
+                SELECT
+                    RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
+                    [2025], [2026], [2027], [2028], [2029],
+                    RTRIM(LTRIM([2030]))         AS [2030]
+                FROM [dbo].[Indicadores_Proyecciones]
+                WHERE RTRIM(LTRIM([Nivel])) = RTRIM(LTRIM(:nivel))
+                  AND [Nombre Corto] IS NOT NULL
+                  AND RTRIM(LTRIM([Nombre Corto])) <> ''
+            """), {"nivel": centro_id.strip()})
+
+            rows = []
+            for row in result.mappings().all():
+                fila = normalizar_fila_indicadores(dict(row))
+                rows.append({
+                    "Nombre Corto": fila.get("Nombre Corto"),
+                    "2025": fila.get("2025"),
+                    "2026": fila.get("2026"),
+                    "2027": fila.get("2027"),
+                    "2028": fila.get("2028"),
+                    "2029": fila.get("2029"),
+                    "2030": fila.get("2030")
+                })
+
+            print(f"=== Filas retornadas: {len(rows)} ===")
+            return rows
+
+    except Exception as e:
+        print(f"❌ ERROR query_indicators: {e}")
+        return []
 
 
 def query_student_summary(engine, centro_id):
-    query = text("""
-        SELECT 
-            SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as pregradoDistancia,
-            SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as pregradoPresencial,
-            SUM(CASE WHEN nivel = 'Pregrado' THEN [Estudiantes Totales] ELSE 0 END) as pregradoTotal,
-            SUM(CASE WHEN nivel = 'Posgrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as posgradoDistancia,
-            SUM(CASE WHEN nivel = 'Posgrado' AND Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as posgradoPresencial,
-            SUM(CASE WHEN nivel = 'Posgrado' THEN [Estudiantes Totales] ELSE 0 END) as posgradoTotal,
-            SUM(CASE WHEN Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as totalGeneralDistancia,
-            SUM(CASE WHEN Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as totalGeneralPresencial,
-            SUM([Estudiantes Totales]) as totalGeneral,
-            SUM(CASE WHEN Género = 'Hombre' THEN [Estudiantes Totales] ELSE 0 END) as hombres,
-            SUM(CASE WHEN Género = 'Mujer' THEN [Estudiantes Totales] ELSE 0 END) as mujeres
-        FROM Caracterizacion_Estudiantil
-        WHERE [Centro Universitario] LIKE :busqueda 
-          AND año = 2026
-    """)
-
-    with engine.connect() as conn:
-        result = conn.execute(query, {"busqueda": f"%{centro_id}%"})
-        row = result.mappings().first()
-        return dict(row) if row else {}
+    try:
+        query = text("""
+            SELECT 
+                SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as pregradoDistancia,
+                SUM(CASE WHEN nivel = 'Pregrado' AND Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as pregradoPresencial,
+                SUM(CASE WHEN nivel = 'Pregrado' THEN [Estudiantes Totales] ELSE 0 END) as pregradoTotal,
+                SUM(CASE WHEN nivel = 'Posgrado' AND Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as posgradoDistancia,
+                SUM(CASE WHEN nivel = 'Posgrado' AND Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as posgradoPresencial,
+                SUM(CASE WHEN nivel = 'Posgrado' THEN [Estudiantes Totales] ELSE 0 END) as posgradoTotal,
+                SUM(CASE WHEN Modalidad = 'Distancia' THEN [Estudiantes Totales] ELSE 0 END) as totalGeneralDistancia,
+                SUM(CASE WHEN Modalidad = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) as totalGeneralPresencial,
+                SUM([Estudiantes Totales]) as totalGeneral,
+                SUM(CASE WHEN Género = 'Hombre' THEN [Estudiantes Totales] ELSE 0 END) as hombres,
+                SUM(CASE WHEN Género = 'Mujer' THEN [Estudiantes Totales] ELSE 0 END) as mujeres
+            FROM Caracterizacion_Estudiantil
+            WHERE [Centro Universitario] LIKE :busqueda 
+              AND año = 2026
+        """)
+        with engine.connect() as conn:
+            result = conn.execute(query, {"busqueda": f"%{centro_id.strip()}%"})
+            row = result.mappings().first()
+            return dict(row) if row else {}
+    except Exception as e:
+        print(f"❌ ERROR query_student_summary: {e}")
+        return {}
 
 
 def query_proyecciones(engine, centro_id):
-    query = text("""
-        SELECT [Nivel Académico], Modalidad, Periodicidad,
-               [Tipo de Estudiante], [Tipo de Información], Año, Valor
-        FROM [Proyecciones_cu]
-        WHERE [Centro Universitario] = :centro_id
-    """)
-
-    with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
-        return [dict(row) for row in result.mappings().all()]
+    try:
+        query = text("""
+            SELECT [Nivel Académico], Modalidad, Periodicidad,
+                   [Tipo de Estudiante], [Tipo de Información], Año, Valor
+            FROM [Proyecciones_cu]
+            WHERE [Centro Universitario] = :centro_id
+        """)
+        with engine.connect() as conn:
+            result = conn.execute(query, {"centro_id": centro_id})
+            return [dict(row) for row in result.mappings().all()]
+    except Exception as e:
+        print(f"❌ ERROR query_proyecciones: {e}")
+        return []
 
 
 def query_desercion(engine, centro_id):
-    query = text("""
-        SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030 ]
-        FROM [Indicadores_Proyecciones]
-        WHERE [Nivel] = :centro_id
-          AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
-    """)
+    try:
+        query = text("""
+            SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030 ]
+            FROM [Indicadores_Proyecciones]
+            WHERE RTRIM(LTRIM([Nivel])) = RTRIM(LTRIM(:centro_id))
+              AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
+        """)
+        with engine.connect() as conn:
+            result = conn.execute(query, {"centro_id": centro_id.strip()})
+            rows = result.mappings().all()
 
-    with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
-        rows = result.mappings().all()
+        desercion = []
+        for row in rows:
+            fila = normalizar_fila_indicadores(dict(row))
+            nombre_corto = fila.get("Nombre Corto")
+            modalidad = "Presencial" if nombre_corto and "Presencial" in nombre_corto else "Distancia"
+            for año in ["2025", "2026", "2027", "2028", "2029", "2030"]:
+                valor = fila.get(año)
+                if valor is not None and valor != "":
+                    desercion.append({
+                        "año": año,
+                        "modalidad": modalidad,
+                        "porcentaje": valor
+                    })
+        return desercion
+    except Exception as e:
+        print(f"❌ ERROR query_desercion: {e}")
+        return []
 
-    desercion = []
-
-    for row in rows:
-        fila = normalizar_fila_indicadores(dict(row))
-
-        nombre_corto = fila.get("Nombre Corto")
-
-        modalidad = (
-            "Presencial"
-            if nombre_corto and "Presencial" in nombre_corto
-            else "Distancia"
-        )
-
-        for año in ["2025", "2026", "2027", "2028", "2029", "2030"]:
-            valor = fila.get(año)
-
-            if valor is not None and valor != "":
-                desercion.append({
-                    "año": año,
-                    "modalidad": modalidad,
-                    "porcentaje": valor 
-                })
-
-    return desercion
 
 def query_oferta(engine, centro_id):
-    query = text("""
-        SELECT año, Nivel, Modalidad, Periodicidad,
-               COUNT(DISTINCT snies) as snies_unico
-        FROM [dbo].[Poblacion Estudiantil]
-        WHERE [Centro Universitario] = :centro_id
-        GROUP BY año, Nivel, Modalidad, Periodicidad
-    """)
-
-    with engine.connect() as conn:
-        result = conn.execute(query, {"centro_id": centro_id})
-        return [dict(row) for row in result.mappings().all()]
+    try:
+        query = text("""
+            SELECT año, Nivel, Modalidad, Periodicidad,
+                   COUNT(DISTINCT snies) as snies_unico
+            FROM [dbo].[Poblacion Estudiantil]
+            WHERE [Centro Universitario] = :centro_id
+            GROUP BY año, Nivel, Modalidad, Periodicidad
+        """)
+        with engine.connect() as conn:
+            result = conn.execute(query, {"centro_id": centro_id})
+            return [dict(row) for row in result.mappings().all()]
+    except Exception as e:
+        print(f"❌ ERROR query_oferta: {e}")
+        return []
 
 # ============================================================================
 # ENDPOINTS
@@ -264,7 +279,6 @@ async def get_observatorio_completo(
     api_key: str = Depends(verificar_api_key)
 ):
     engine = conectar_bd()
-
     if not engine:
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -276,8 +290,6 @@ async def get_observatorio_completo(
             "desercion": query_desercion(engine, centro_id),
             "oferta": query_oferta(engine, centro_id),
         }
-
-
     except Exception as e:
         print("🔥 ERROR REAL:", e)
         raise HTTPException(status_code=500, detail=str(e))
