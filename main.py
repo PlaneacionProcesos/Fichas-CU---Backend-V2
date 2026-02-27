@@ -111,7 +111,7 @@ def normalizar_fila_indicadores(row):
 
 def limpiar_centro_id(centro_id: str) -> str:
     """
-    Elimina espacios normales Y espacios no-break \\xa0 (CHAR 160)
+    Elimina espacios normales Y espacios no-break \xa0 (CHAR 160)
     que algunos valores tienen al final en la BD.
     """
     return centro_id.strip().replace('\xa0', '').strip()
@@ -160,18 +160,20 @@ def query_indicators(engine, centro_id):
 
 def query_student_summary(engine, centro_id):
     """
-    Saca totales de estudiantes desde dbo.Poblacion Estudiantil.
+    Totales de población desde dbo.Poblacion Estudiantil
+    filtrado por año=2026 y Cuatrimestre IN ('S1','Q1').
 
-    Segmentación de Nivel Académico:
-      - Posgrado: Maestría, Especialización
-      - Pregrado: todo lo demás (Licenciatura, Profesional,
-                  Técnico Profesional, Tecnología, etc.)
+    Segmentación:
+      Posgrado  -> Maestría, Especialización
+      Pregrado  -> todo lo demás
 
-    Los géneros vienen de dbo.Caracterizacion_Estudiantil
-    usando la columna Género (con tilde).
+    Géneros desde dbo.Caracterizacion_Estudiantil
+    columna Género (con tilde), año=2026.
     """
     try:
-        # ── Totales por nivel académico y modalidad ──────────────────────────
+        centro_limpio = limpiar_centro_id(centro_id)
+
+        # ── Totales por nivel y modalidad ─────────────────────────────────────
         query_poblacion = text("""
             SELECT
                 SUM(CASE
@@ -214,38 +216,42 @@ def query_student_summary(engine, centro_id):
 
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
+              AND [año] = 2026
+              AND [Cuatrimestre] IN ('S1', 'Q1')
         """)
 
-        # ── Géneros desde Caracterizacion_Estudiantil ────────────────────────
+        # ── Géneros desde Caracterizacion_Estudiantil ─────────────────────────
+        # Usamos LIKE con el nombre limpio para tolerar variaciones de espacios
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN [Género] = 'Hombre' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
                 SUM(CASE WHEN [Género] = 'Mujer'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
             FROM [dbo].[Caracterizacion_Estudiantil]
             WHERE [Centro Universitario] LIKE :busqueda
-              AND año = 2026
+              AND [año] = 2026
         """)
 
         with engine.connect() as conn:
-            # Ejecutar query de población
             row_pob = conn.execute(
                 query_poblacion,
                 {"centro_id": centro_id}
             ).mappings().first()
 
-            # Ejecutar query de géneros
             row_gen = conn.execute(
                 query_generos,
-                {"busqueda": f"%{limpiar_centro_id(centro_id)}%"}
+                {"busqueda": f"%{centro_limpio}%"}
             ).mappings().first()
 
         resultado = dict(row_pob) if row_pob else {}
+
         if row_gen:
             resultado["hombres"] = row_gen["hombres"]
             resultado["mujeres"] = row_gen["mujeres"]
+            print(f"  géneros -> hombres={row_gen['hombres']} mujeres={row_gen['mujeres']}")
         else:
             resultado["hombres"] = None
             resultado["mujeres"] = None
+            print("  géneros -> sin resultados, verifica columna [Género] y año en Caracterizacion_Estudiantil")
 
         print(f"query_student_summary -> {resultado}")
         return resultado
