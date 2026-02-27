@@ -11,10 +11,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DB_SERVER = os.getenv("DB_SERVER")
-DB_USER = os.getenv("DB_USER")
-DB_PASS = os.getenv("DB_PASS")
-DB_PORT = os.getenv("DB_PORT", "1433")
-DB_NAME = os.getenv("DB_NAME", "db360")
+DB_USER   = os.getenv("DB_USER")
+DB_PASS   = os.getenv("DB_PASS")
+DB_PORT   = os.getenv("DB_PORT", "1433")
+DB_NAME   = os.getenv("DB_NAME", "db360")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
 
 if not all([DB_SERVER, DB_USER, DB_PASS, API_KEY_SECRETA]):
@@ -53,11 +53,11 @@ app.add_middleware(
 # ============================================================================
 # CONEXIÓN BD
 # ============================================================================
-_engine_cache = None
-_ultima_conexion = None
-_total_conexiones = 0
+_engine_cache      = None
+_ultima_conexion   = None
+_total_conexiones  = 0
 _conexiones_fallidas = 0
-_ultimo_error = None
+_ultimo_error      = None
 
 def conectar_bd():
     global _engine_cache, _ultima_conexion
@@ -84,15 +84,15 @@ def conectar_bd():
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
 
-        _engine_cache = engine
-        _ultima_conexion = time.strftime("%Y-%m-%d %H:%M:%S")
+        _engine_cache      = engine
+        _ultima_conexion   = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
-        _ultimo_error = None
+        _ultimo_error      = None
         print("✅ Conexión a BD establecida correctamente")
         return engine
 
     except Exception as e:
-        _ultimo_error = str(e)
+        _ultimo_error        = str(e)
         _conexiones_fallidas += 1
         print(f"❌ Error conectando a BD: {e}")
         return None
@@ -105,35 +105,20 @@ def normalizar_fila_indicadores(row):
     for key, value in row.items():
         if key is None:
             continue
-        key_str = str(key).strip()
-        fila[key_str] = value
+        fila[str(key).strip()] = value
     return fila
 
 
 def normalizar_fila_proyecciones(row: dict) -> dict:
     """
-    Convierte los nombres de columna de la tabla Proyecciones_cu
-    (con tildes, espacios y mayúsculas) a snake_case sin tildes,
-    para que el modelo JS pueda hacer búsquedas de forma consistente.
+    Mapea los nombres de columna originales de Proyecciones_cu
+    a snake_case para que el modelo JS los consuma de forma consistente.
 
-    Mapeo:
-      Rectoría              → rectoria
-      Centro Universitario  → centro_universitario
-      Sede                  → sede
-      Nivel Académico       → nivel_academico
-      Nivel de Formación    → nivel_formacion
-      Facultad              → facultad
-      Periodicidad          → periodicidad
-      Modalidad             → modalidad
-      CECO                  → ceco
-      Snies                 → snies
-      Programa              → programa
-      Atributo              → atributo
-      Valor                 → valor
-      Tipo de Estudiante    → tipo_estudiante
-      Tipo de Información   → tipo_informacion
-      Periodo               → periodo
-      Año                   → año
+    Valores importantes confirmados en BD:
+      Tipo de Estudiante : 'Nuevos' | 'Continuos' | 'Totales'
+      Tipo de Información: 'Proyectado' (solo 2025-2026)
+                           'Meta'       (2025-2030)
+                           'Histórico'  (2017-2026)
     """
     MAPA = {
         "Rectoría":             "rectoria",
@@ -163,10 +148,6 @@ def normalizar_fila_proyecciones(row: dict) -> dict:
 
 
 def limpiar_centro_id(centro_id: str) -> str:
-    """
-    Elimina espacios normales Y espacios no-break \\xa0 (CHAR 160)
-    que algunos valores tienen al final en la BD.
-    """
     return centro_id.strip().replace('\xa0', '').strip()
 
 # ============================================================================
@@ -176,14 +157,12 @@ def limpiar_centro_id(centro_id: str) -> str:
 def query_indicators(engine, centro_id):
     try:
         centro_limpio = limpiar_centro_id(centro_id)
-        print(f"query_indicators -> centro_limpio='{centro_limpio}' largo={len(centro_limpio)}")
-
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
                     RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
                     [2025], [2026], [2027], [2028], [2029],
-                    RTRIM(LTRIM([2030]))         AS [2030]
+                    RTRIM(LTRIM([2030])) AS [2030]
                 FROM [dbo].[Indicadores_Proyecciones]
                 WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :nivel
                   AND [Nombre Corto] IS NOT NULL
@@ -200,10 +179,9 @@ def query_indicators(engine, centro_id):
                     "2027": fila.get("2027"),
                     "2028": fila.get("2028"),
                     "2029": fila.get("2029"),
-                    "2030": fila.get("2030")
+                    "2030": fila.get("2030"),
                 })
-
-            print(f"query_indicators -> filas retornadas: {len(rows)}")
+            print(f"query_indicators -> filas: {len(rows)}")
             return rows
 
     except Exception as e:
@@ -212,57 +190,18 @@ def query_indicators(engine, centro_id):
 
 
 def query_student_summary(engine, centro_id):
-    """
-    - Población (totales por nivel/modalidad): dbo.Poblacion Estudiantil
-      filtrado por [Rectoría] = 'Bogotá', año=2026, Cuatrimestre IN ('S1','Q1').
-      Segmentación: Posgrado = Maestría + Especialización, resto = Pregrado.
-
-    - Géneros: dbo.Caracterizacion_Estudiantil
-      filtrado por [Rectoría] = 'Bogotá', año=2026.
-
-    Ambas queries son FIJAS a Bogotá, independiente del centro seleccionado.
-    """
     try:
         query_poblacion = text("""
             SELECT
-                SUM(CASE
-                    WHEN [Nivel] NOT IN ('Maestría', 'Especialización')
-                     AND [Modalidad] = 'Distancia'
-                    THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
-
-                SUM(CASE
-                    WHEN [Nivel] NOT IN ('Maestría', 'Especialización')
-                     AND [Modalidad] = 'Presencial'
-                    THEN [Estudiantes Totales] ELSE 0 END) AS pregradoPresencial,
-
-                SUM(CASE
-                    WHEN [Nivel] NOT IN ('Maestría', 'Especialización')
-                    THEN [Estudiantes Totales] ELSE 0 END) AS pregradoTotal,
-
-                SUM(CASE
-                    WHEN [Nivel] IN ('Maestría', 'Especialización')
-                     AND [Modalidad] = 'Distancia'
-                    THEN [Estudiantes Totales] ELSE 0 END) AS posgradoDistancia,
-
-                SUM(CASE
-                    WHEN [Nivel] IN ('Maestría', 'Especialización')
-                     AND [Modalidad] = 'Presencial'
-                    THEN [Estudiantes Totales] ELSE 0 END) AS posgradoPresencial,
-
-                SUM(CASE
-                    WHEN [Nivel] IN ('Maestría', 'Especialización')
-                    THEN [Estudiantes Totales] ELSE 0 END) AS posgradoTotal,
-
-                SUM(CASE
-                    WHEN [Modalidad] = 'Distancia'
-                    THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralDistancia,
-
-                SUM(CASE
-                    WHEN [Modalidad] = 'Presencial'
-                    THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralPresencial,
-
+                SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización') AND [Modalidad]='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
+                SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización') AND [Modalidad]='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS pregradoPresencial,
+                SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización')                              THEN [Estudiantes Totales] ELSE 0 END) AS pregradoTotal,
+                SUM(CASE WHEN [Nivel] IN     ('Maestría','Especialización') AND [Modalidad]='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS posgradoDistancia,
+                SUM(CASE WHEN [Nivel] IN     ('Maestría','Especialización') AND [Modalidad]='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS posgradoPresencial,
+                SUM(CASE WHEN [Nivel] IN     ('Maestría','Especialización')                              THEN [Estudiantes Totales] ELSE 0 END) AS posgradoTotal,
+                SUM(CASE WHEN [Modalidad]='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralDistancia,
+                SUM(CASE WHEN [Modalidad]='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralPresencial,
                 SUM([Estudiantes Totales]) AS totalGeneral
-
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Rectoría] = 'Bogotá'
               AND [año] = 2026
@@ -271,38 +210,20 @@ def query_student_summary(engine, centro_id):
 
         query_generos = text("""
             SELECT
-                SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes totales] ELSE 0 END) AS hombres,
-                SUM(CASE WHEN [Género] = 'Femenino'  THEN [Estudiantes totales] ELSE 0 END) AS mujeres
+                SUM(CASE WHEN [Género]='Masculino' THEN [Estudiantes totales] ELSE 0 END) AS hombres,
+                SUM(CASE WHEN [Género]='Femenino'  THEN [Estudiantes totales] ELSE 0 END) AS mujeres
             FROM [dbo].[Caracterizacion_Estudiantil]
             WHERE [Rectoría] = 'Bogotá'
               AND [año] = 2026
         """)
 
-        # ── CORRECCIÓN: todo dentro del mismo bloque with ─────────────────
         with engine.connect() as conn:
-            debug = conn.execute(text("""
-                SELECT DISTINCT [Género], COUNT(*) as total
-                FROM [dbo].[Caracterizacion_Estudiantil]
-                WHERE [año] = 2026
-                GROUP BY [Género]
-            """)).mappings().all()
-            print(f"  DEBUG géneros distintos año=2026: {[dict(r) for r in debug]}")
-
             row_pob = conn.execute(query_poblacion).mappings().first()
             row_gen = conn.execute(query_generos).mappings().first()
 
         resultado = dict(row_pob) if row_pob else {}
-
-        if row_gen:
-            resultado["hombres"] = row_gen["hombres"]
-            resultado["mujeres"] = row_gen["mujeres"]
-            print(f"  géneros Bogotá -> hombres={row_gen['hombres']} mujeres={row_gen['mujeres']}")
-        else:
-            resultado["hombres"] = None
-            resultado["mujeres"] = None
-            print("  géneros -> sin resultados para Rectoría Bogotá año=2026")
-
-        print(f"query_student_summary -> {resultado}")
+        resultado["hombres"] = row_gen["hombres"] if row_gen else None
+        resultado["mujeres"] = row_gen["mujeres"] if row_gen else None
         return resultado
 
     except Exception as e:
@@ -312,9 +233,19 @@ def query_student_summary(engine, centro_id):
 
 def query_proyecciones(engine, centro_id):
     """
-    Retorna todas las filas de Proyecciones_cu para el centro dado,
-    con los campos normalizados a snake_case para que el modelo JS
-    pueda filtrar directamente por nivel_academico, modalidad, etc.
+    Trae todas las filas de Proyecciones_cu para el centro dado
+    y las normaliza a snake_case.
+
+    Valores confirmados en BD:
+      tipo_estudiante  : 'Nuevos' | 'Continuos' | 'Totales'
+      tipo_informacion : 'Proyectado' (2025-2026) | 'Meta' (2025-2030) | 'Histórico' (2017-2026)
+      año              : 2017 … 2030
+
+    Las tablas 1, 2 y 4 del dashboard filtran por tipo_informacion IN ('Proyectado','Meta')
+    según el año:
+      - 2026         → usa 'Proyectado'
+      - 2027 a 2030  → usa 'Meta'
+    Ese filtro se aplica en el modelo JS (proyeccionEsModel.js), no aquí.
     """
     try:
         query = text("""
@@ -340,11 +271,10 @@ def query_proyecciones(engine, centro_id):
             WHERE [Centro Universitario] = :centro_id
         """)
         with engine.connect() as conn:
-            result = conn.execute(query, {"centro_id": centro_id})
-            rows = result.mappings().all()
+            rows = conn.execute(query, {"centro_id": centro_id}).mappings().all()
 
         normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
-        print(f"query_proyecciones -> filas retornadas: {len(normalizadas)}")
+        print(f"query_proyecciones -> filas: {len(normalizadas)}")
         return normalizadas
 
     except Exception as e:
@@ -362,22 +292,17 @@ def query_desercion(engine, centro_id):
               AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
         """)
         with engine.connect() as conn:
-            result = conn.execute(query, {"centro_id": centro_limpio})
-            rows = result.mappings().all()
+            rows = conn.execute(query, {"centro_id": centro_limpio}).mappings().all()
 
         desercion = []
         for row in rows:
             fila = normalizar_fila_indicadores(dict(row))
-            nombre_corto = fila.get("Nombre Corto")
-            modalidad = "Presencial" if nombre_corto and "Presencial" in nombre_corto else "Distancia"
+            nombre = fila.get("Nombre Corto", "")
+            modalidad = "Presencial" if "Presencial" in nombre else "Distancia"
             for año in ["2025", "2026", "2027", "2028", "2029", "2030"]:
                 valor = fila.get(año)
                 if valor is not None and valor != "":
-                    desercion.append({
-                        "año": año,
-                        "modalidad": modalidad,
-                        "porcentaje": valor
-                    })
+                    desercion.append({"año": año, "modalidad": modalidad, "porcentaje": valor})
         return desercion
 
     except Exception as e:
@@ -386,38 +311,31 @@ def query_desercion(engine, centro_id):
 
 
 def query_oferta(engine, centro_id):
-    """
-    Retorna la oferta académica con snake_case para que el modelo JS
-    pueda filtrar por nivel_academico, modalidad y periodicidad.
-    """
     try:
         query = text("""
             SELECT
                 [año],
-                [Nivel]          AS nivel_academico,
-                [Modalidad]      AS modalidad,
-                [Periodicidad]   AS periodicidad,
+                [Nivel]        AS nivel_academico,
+                [Modalidad]    AS modalidad,
+                [Periodicidad] AS periodicidad,
                 COUNT(DISTINCT [snies]) AS snies_unico
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
             GROUP BY [año], [Nivel], [Modalidad], [Periodicidad]
         """)
         with engine.connect() as conn:
-            result = conn.execute(query, {"centro_id": centro_id})
-            rows = [dict(r) for r in result.mappings().all()]
+            rows = conn.execute(query, {"centro_id": centro_id}).mappings().all()
 
-        # Aseguramos claves consistentes en minúscula
-        normalizadas = []
-        for r in rows:
-            normalizadas.append({
-                "año":             r.get("año"),
-                "nivel_academico": r.get("nivel_academico"),
-                "modalidad":       r.get("modalidad"),
-                "periodicidad":    r.get("periodicidad"),
-                "snies_unico":     r.get("snies_unico"),
-            })
-        print(f"query_oferta -> filas retornadas: {len(normalizadas)}")
-        return normalizadas
+        return [
+            {
+                "año":             r["año"],
+                "nivel_academico": r["nivel_academico"],
+                "modalidad":       r["modalidad"],
+                "periodicidad":    r["periodicidad"],
+                "snies_unico":     r["snies_unico"],
+            }
+            for r in rows
+        ]
 
     except Exception as e:
         print(f"❌ ERROR query_oferta: {e}")
@@ -431,19 +349,21 @@ def query_oferta(engine, centro_id):
 async def root():
     return {"message": "API Observatorio funcionando correctamente"}
 
+
 @app.get("/health")
 async def health():
     engine = conectar_bd()
     return {
         "status": "ok",
         "conexion_bd": engine is not None,
-        "ultimo_error": _ultimo_error
+        "ultimo_error": _ultimo_error,
     }
+
 
 @app.get("/api/observatorio/completo/{centro_id}")
 async def get_observatorio_completo(
     centro_id: str,
-    api_key: str = Depends(verificar_api_key)
+    api_key: str = Depends(verificar_api_key),
 ):
     engine = conectar_bd()
     if not engine:
@@ -461,10 +381,11 @@ async def get_observatorio_completo(
         print("🔥 ERROR REAL:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/observatorio/page2/{centro_id}")
 async def get_page2_data(
     centro_id: str,
-    api_key: str = Depends(verificar_api_key)
+    api_key: str = Depends(verificar_api_key),
 ):
     return await get_observatorio_completo(centro_id, api_key)
 
