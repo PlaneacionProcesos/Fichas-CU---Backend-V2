@@ -233,42 +233,41 @@ def query_student_summary(engine, centro_id):
 
 def query_proyecciones(engine, centro_id):
     """
-    Trae todas las filas de Proyecciones_cu para el centro dado
-    y las normaliza a snake_case.
+    Trae las filas de Proyecciones_cu para el centro dado,
+    agrupadas por las dimensiones clave y sumando el Valor.
 
-    Valores confirmados en BD:
-      tipo_estudiante  : 'Nuevos' | 'Continuos' | 'Totales'
-      tipo_informacion : 'Proyectado' (2025-2026) | 'Meta' (2025-2030) | 'Histórico' (2017-2026)
-      año              : 2017 … 2030
+    Filtro de Atributo:
+      - Para Tablas 1, 2, 4 (Meta): solo filas cuyo Atributo contiene 'Q1/S1'
+        para evitar triplicar (Q1/S1, Q2, Q3/S2).
+        Ej: 'C-M-Q1/S1-2026', 'N-M-Q1/S1-2026', 'T-M-Q1/S1-2026'
+      - Para Tabla 3 (comparativa 2026): igual, solo Q1/S1.
 
-    Las tablas 1, 2 y 4 del dashboard filtran por tipo_informacion IN ('Proyectado','Meta')
-    según el año:
-      - 2026         → usa 'Proyectado'
-      - 2027 a 2030  → usa 'Meta'
-    Ese filtro se aplica en el modelo JS (proyeccionEsModel.js), no aquí.
+    Se agrupa por: nivel_academico, nivel_formacion, modalidad, periodicidad,
+                   tipo_estudiante, tipo_informacion, año
+    y se suma Valor para consolidar los programas del centro.
     """
     try:
         query = text("""
             SELECT
-                [Rectoría],
-                [Centro Universitario],
-                [Sede],
                 [Nivel Académico],
                 [Nivel de Formación],
-                [Facultad],
-                [Periodicidad],
                 [Modalidad],
-                [CECO],
-                [Snies],
-                [Programa],
-                [Atributo],
-                [Valor],
+                [Periodicidad],
                 [Tipo de Estudiante],
                 [Tipo de Información],
-                [Periodo],
-                [Año]
+                [Año],
+                SUM([Valor]) AS [Valor]
             FROM [dbo].[Proyecciones_cu]
             WHERE [Centro Universitario] = :centro_id
+              AND [Atributo] LIKE '%Q1/S1%'
+            GROUP BY
+                [Nivel Académico],
+                [Nivel de Formación],
+                [Modalidad],
+                [Periodicidad],
+                [Tipo de Estudiante],
+                [Tipo de Información],
+                [Año]
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": centro_id}).mappings().all()
@@ -279,6 +278,49 @@ def query_proyecciones(engine, centro_id):
 
     except Exception as e:
         print(f"❌ ERROR query_proyecciones: {e}")
+        return []
+
+
+def query_matriculados_2026(engine, centro_id):
+    """
+    Trae los estudiantes matriculados reales de [Poblacion Estudiantil]
+    para el centro dado, año 2026, periodos S1 y Q1.
+    Columnas: Estudiantes Nuevos, Estudiantes Continuos, Estudiantes Totales
+    Agrupado por: Nivel Académico (mapeado a Pregrado/Posgrado), Modalidad
+    """
+    try:
+        query = text("""
+            SELECT
+                CASE
+                    WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
+                    THEN 'Posgrado'
+                    ELSE 'Pregrado'
+                END AS nivel_academico,
+                [Modalidad] AS modalidad,
+                SUM([Estudiantes Nuevos])     AS nuevos_matriculados,
+                SUM([Estudiantes Continuos])  AS continuos_matriculados,
+                SUM([Estudiantes Totales])    AS totales_matriculados
+            FROM [dbo].[Poblacion Estudiantil]
+            WHERE [Centro Universitario] = :centro_id
+              AND [año] = 2026
+              AND [Cuatrimestre] IN ('S1', 'Q1')
+            GROUP BY
+                CASE
+                    WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
+                    THEN 'Posgrado'
+                    ELSE 'Pregrado'
+                END,
+                [Modalidad]
+        """)
+        with engine.connect() as conn:
+            rows = conn.execute(query, {"centro_id": centro_id}).mappings().all()
+
+        resultado = [dict(r) for r in rows]
+        print(f"query_matriculados_2026 -> filas: {len(resultado)}")
+        return resultado
+
+    except Exception as e:
+        print(f"❌ ERROR query_matriculados_2026: {e}")
         return []
 
 
@@ -371,11 +413,12 @@ async def get_observatorio_completo(
 
     try:
         return {
-            "indicators":     query_indicators(engine, centro_id),
-            "studentSummary": query_student_summary(engine, centro_id),
-            "proyecciones":   query_proyecciones(engine, centro_id),
-            "desercion":      query_desercion(engine, centro_id),
-            "oferta":         query_oferta(engine, centro_id),
+            "indicators":        query_indicators(engine, centro_id),
+            "studentSummary":    query_student_summary(engine, centro_id),
+            "proyecciones":      query_proyecciones(engine, centro_id),
+            "matriculados2026":  query_matriculados_2026(engine, centro_id),
+            "desercion":         query_desercion(engine, centro_id),
+            "oferta":            query_oferta(engine, centro_id),
         }
     except Exception as e:
         print("🔥 ERROR REAL:", e)
