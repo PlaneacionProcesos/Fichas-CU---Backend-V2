@@ -131,34 +131,26 @@ def normalizar_fila_indicadores(row):
 # ============================================================================
 
 def query_indicators(engine, centro_id):
-    query = text("""
-        SELECT
-            RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
-            RTRIM(LTRIM([Nivel]))        AS [Nivel],
-            [2025], [2026], [2027], [2028], [2029],
-            RTRIM(LTRIM([2030]))         AS [2030]
-        FROM [dbo].[Indicadores_Proyecciones]
-        WHERE RTRIM(LTRIM([Nivel])) = RTRIM(LTRIM(:nivel))
-          AND RTRIM(LTRIM([Nombre Corto])) IS NOT NULL
-          AND RTRIM(LTRIM([Nombre Corto])) <> ''
-    """)
-
+    # DEBUG COMPLETO
     with engine.connect() as conn:
-        result = conn.execute(query, {"nivel": centro_id.strip()})
-        rows = []
-        for row in result.mappings().all():
-            fila = normalizar_fila_indicadores(dict(row))
-            rows.append({
-                "Nombre Corto": fila.get("Nombre Corto"),
-                "2025": fila.get("2025"),
-                "2026": fila.get("2026"),
-                "2027": fila.get("2027"),
-                "2028": fila.get("2028"),
-                "2029": fila.get("2029"),
-                "2030": fila.get("2030")
-            })
-        print(f"Filas encontradas para '{centro_id}': {len(rows)}")
-        return rows
+        # Ver todos los valores únicos de Nivel
+        r = conn.execute(text("""
+            SELECT DISTINCT [Nivel], LEN([Nivel]) as largo
+            FROM [dbo].[Indicadores_Proyecciones]
+            WHERE [Nivel] IS NOT NULL
+        """))
+        print("=== VALORES EN [Nivel] ===")
+        for row in r:
+            valor = row[0]
+            largo = row[1]
+            # Mostrar cada caracter y su código ASCII
+            chars = [(c, ord(c)) for c in str(valor)]
+            print(f"  '{valor}' largo={largo} chars={chars}")
+        
+        print(f"=== centro_id recibido ===")
+        print(f"  '{centro_id}' largo={len(centro_id)}")
+        chars_id = [(c, ord(c)) for c in centro_id]
+        print(f"  chars={chars_id}")
 
 
 def query_student_summary(engine, centro_id):
