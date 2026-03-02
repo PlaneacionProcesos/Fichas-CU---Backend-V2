@@ -176,6 +176,7 @@ def limpiar_centro_id(centro_id: str) -> str:
 def query_indicators(engine, centro_id):
     try:
         centro_limpio = limpiar_centro_id(centro_id)
+        print(f"query_indicators: centro_limpio='{centro_limpio}'")
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
@@ -188,10 +189,19 @@ def query_indicators(engine, centro_id):
                   AND RTRIM(LTRIM([Nombre Corto])) <> ''
             """), {"nivel": centro_limpio})
 
-            rows = []
-            for row in result.mappings().all():
+            rows = result.mappings().all()
+            print(f"query_indicators: encontradas {len(rows)} filas")
+            if rows:
+                print("Primera fila:", dict(rows[0]))
+            else:
+                # Podríamos hacer una consulta de prueba para ver qué valores de [Nivel] existen
+                prueba = conn.execute(text("SELECT DISTINCT REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') as nivel FROM [dbo].[Indicadores_Proyecciones]")).fetchall()
+                print("Niveles disponibles en la tabla:", [p[0] for p in prueba])
+
+            filas_procesadas = []
+            for row in rows:
                 fila = normalizar_fila_indicadores(dict(row))
-                rows.append({
+                filas_procesadas.append({
                     "Nombre Corto": fila.get("Nombre Corto"),
                     "2025": fila.get("2025"),
                     "2026": fila.get("2026"),
@@ -200,8 +210,7 @@ def query_indicators(engine, centro_id):
                     "2029": fila.get("2029"),
                     "2030": fila.get("2030"),
                 })
-            print(f"query_indicators -> filas: {len(rows)}")
-            return rows
+            return filas_procesadas
 
     except Exception as e:
         print(f"❌ ERROR query_indicators: {e}")
@@ -351,32 +360,42 @@ def query_matriculados_2026(engine, centro_id):
         return []
 
 def query_desercion(engine, centro_id):
+    """
+    Trae Deserción Presencial y Deserción Distancia de Indicadores_Proyecciones
+    para el centro dado (2026–2030).
+    Usa resolver_centro_id para mapear el centro_id del frontend al nombre real en BD.
+    """
     try:
-        centro_limpio = limpiar_centro_id(centro_id)
+        nombre_bd = resolver_centro_id(centro_id)   # ← antes usaba limpiar_centro_id (bug)
         query = text("""
-            SELECT [Nombre Corto], [2025], [2026], [2027], [2028], [2029], [2030 ]
-            FROM [Indicadores_Proyecciones]
+            SELECT [Nombre Corto], [2026], [2027], [2028], [2029], [2030 ]
+            FROM [dbo].[Indicadores_Proyecciones]
             WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :centro_id
               AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
         """)
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": centro_limpio}).mappings().all()
+            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
 
         desercion = []
         for row in rows:
             fila = normalizar_fila_indicadores(dict(row))
             nombre = fila.get("Nombre Corto", "")
             modalidad = "Presencial" if "Presencial" in nombre else "Distancia"
-            for año in ["2025", "2026", "2027", "2028", "2029", "2030"]:
+            for año in ["2026", "2027", "2028", "2029", "2030"]:
                 valor = fila.get(año)
                 if valor is not None and valor != "":
-                    desercion.append({"año": año, "modalidad": modalidad, "porcentaje": valor})
+                    desercion.append({
+                        "año":        año,
+                        "modalidad":  modalidad,
+                        "porcentaje": valor,
+                    })
+
+        print(f"query_desercion -> centro='{nombre_bd}' filas: {len(desercion)}")
         return desercion
 
     except Exception as e:
         print(f"❌ ERROR query_desercion: {e}")
         return []
-
 
 def query_oferta(engine, centro_id):
     """
