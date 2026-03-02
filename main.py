@@ -300,7 +300,6 @@ def query_proyecciones(engine, centro_id):
         print(f"❌ ERROR query_proyecciones: {e}")
         return []
 
-
 def query_matriculados_2026(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
@@ -310,9 +309,11 @@ def query_matriculados_2026(engine, centro_id):
                     WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
                     THEN 'Posgrado'
                     ELSE 'Pregrado'
-                END                        AS nivel_academico,
-                RTRIM(LTRIM([Modalidad]))   AS modalidad,
-                SUM([Estudiantes Nuevos])   AS nuevos_matriculados
+                END                          AS nivel_academico,
+                RTRIM(LTRIM([Modalidad]))     AS modalidad,
+                SUM([Estudiantes Nuevos])     AS nuevos_matriculados,
+                SUM([Estudiantes Antiguos])   AS continuos_matriculados,
+                SUM([Estudiantes Totales])    AS totales_matriculados
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
               AND [año]          = 2026
@@ -330,16 +331,18 @@ def query_matriculados_2026(engine, centro_id):
 
         resultado = [
             {
-                "nivel_academico":     str(r["nivel_academico"]).strip(),
-                "modalidad":           str(r["modalidad"]).strip(),
-                "nuevos_matriculados": int(r["nuevos_matriculados"] or 0),
+                "nivel_academico":        str(r["nivel_academico"]).strip(),
+                "modalidad":              str(r["modalidad"]).strip(),
+                "nuevos_matriculados":    int(r["nuevos_matriculados"]    or 0),
+                "continuos_matriculados": int(r["continuos_matriculados"] or 0),
+                "totales_matriculados":   int(r["totales_matriculados"]   or 0),
             }
             for r in rows
         ]
 
         print(f"query_matriculados_2026 -> centro='{nombre_bd}' filas: {len(resultado)}")
         for r in resultado:
-            print(f"  {r['nivel_academico']} | {r['modalidad']} | nuevos={r['nuevos_matriculados']}")
+            print(f"  {r['nivel_academico']} | {r['modalidad']} | nuevos={r['nuevos_matriculados']} | continuos={r['continuos_matriculados']} | totales={r['totales_matriculados']}")
 
         return resultado
 
