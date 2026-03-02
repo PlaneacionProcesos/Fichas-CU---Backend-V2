@@ -415,7 +415,14 @@ def query_oferta(engine, centro_id):
         # Debug: muestra muestra de valores únicos para verificar
         niveles = set(r["nivel_academico"] for r in resultado)
         modalidades = set(r["modalidad"] for r in resultado)
-        periodicidades = set(r["periodicidad"] for r i
+        periodicidades = set(r["periodicidad"] for r in resultado)
+        print(f"  niveles={niveles} | modalidades={modalidades} | periodicidades={periodicidades}")
+        return resultado
+
+    except Exception as e:
+        print(f"❌ ERROR query_oferta: {e}")
+        return []
+
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
