@@ -322,9 +322,7 @@ def query_matriculados_2026(engine, centro_id):
                     ELSE 'Pregrado'
                 END                           AS nivel_academico,
                 RTRIM(LTRIM([Modalidad]))      AS modalidad,
-                SUM([Estudiantes Nuevos])      AS nuevos_matriculados,
-                SUM([Estudiantes Continuos])   AS continuos_matriculados,
-                SUM([Estudiantes Totales])     AS totales_matriculados
+                SUM([Estudiantes Nuevos])      AS nuevos_matriculados
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
               AND [año]          = 2026
