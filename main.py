@@ -374,37 +374,48 @@ def query_desercion(engine, centro_id):
 
 
 def query_oferta(engine, centro_id):
+    """
+    Cuenta SNIES únicos por año, nivel académico, modalidad y periodicidad
+    directamente desde Proyecciones_cu.
+    Cada SNIES distinto cuenta como 1 programa de oferta.
+    """
     try:
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
-                [año],
-                [Nivel]        AS nivel_academico,
-                [Modalidad]    AS modalidad,
-                [Periodicidad] AS periodicidad,
-                COUNT(DISTINCT [snies]) AS snies_unico
-            FROM [dbo].[Poblacion Estudiantil]
+                CAST([Año] AS VARCHAR(4))  AS año,
+                [Nivel Académico]          AS nivel_academico,
+                [Modalidad]                AS modalidad,
+                [Periodicidad]             AS periodicidad,
+                COUNT(DISTINCT [Snies])    AS snies_unico
+            FROM [dbo].[Proyecciones_cu]
             WHERE [Centro Universitario] = :centro_id
-            GROUP BY [año], [Nivel], [Modalidad], [Periodicidad]
+              AND [Snies] IS NOT NULL
+              AND [Año] BETWEEN 2026 AND 2030
+            GROUP BY
+                [Año],
+                [Nivel Académico],
+                [Modalidad],
+                [Periodicidad]
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
 
-        return [
+        resultado = [
             {
-                "año":             r["año"],
-                "nivel_academico": r["nivel_academico"],
-                "modalidad":       r["modalidad"],
-                "periodicidad":    r["periodicidad"],
-                "snies_unico":     r["snies_unico"],
+                "año":             str(r["año"]).strip(),
+                "nivel_academico": str(r["nivel_academico"]).strip() if r["nivel_academico"] else "",
+                "modalidad":       str(r["modalidad"]).strip()       if r["modalidad"]       else "",
+                "periodicidad":    str(r["periodicidad"]).strip()     if r["periodicidad"]    else "",
+                "snies_unico":     int(r["snies_unico"]),
             }
             for r in rows
         ]
-
-    except Exception as e:
-        print(f"❌ ERROR query_oferta: {e}")
-        return []
-
+        print(f"query_oferta (Proyecciones_cu) -> centro='{nombre_bd}' filas: {len(resultado)}")
+        # Debug: muestra muestra de valores únicos para verificar
+        niveles = set(r["nivel_academico"] for r in resultado)
+        modalidades = set(r["modalidad"] for r in resultado)
+        periodicidades = set(r["periodicidad"] for r i
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
