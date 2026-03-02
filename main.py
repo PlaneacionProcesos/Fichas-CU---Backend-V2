@@ -302,16 +302,6 @@ def query_proyecciones(engine, centro_id):
 
 
 def query_matriculados_2026(engine, centro_id):
-    """
-    Trae el recuento REAL de estudiantes de [Poblacion Estudiantil]
-    para el centro dado, año 2026, periodos S1 y Q1.
-    
-    - nuevos_matriculados    ← SUM([Estudiantes Nuevos])
-    - continuos_matriculados ← SUM([Estudiantes Continuos])
-    - totales_matriculados   ← SUM([Estudiantes Totales])
-    
-    Agrupado por Pregrado/Posgrado y Modalidad.
-    """
     try:
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
@@ -320,9 +310,9 @@ def query_matriculados_2026(engine, centro_id):
                     WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
                     THEN 'Posgrado'
                     ELSE 'Pregrado'
-                END                           AS nivel_academico,
-                RTRIM(LTRIM([Modalidad]))      AS modalidad,
-                SUM([Estudiantes Nuevos])      AS nuevos_matriculados
+                END                        AS nivel_academico,
+                RTRIM(LTRIM([Modalidad]))   AS modalidad,
+                SUM([Estudiantes Nuevos])   AS nuevos_matriculados
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
               AND [año]          = 2026
@@ -340,27 +330,22 @@ def query_matriculados_2026(engine, centro_id):
 
         resultado = [
             {
-                "nivel_academico":       str(r["nivel_academico"]).strip(),
-                "modalidad":             str(r["modalidad"]).strip(),
-                "nuevos_matriculados":   int(r["nuevos_matriculados"]   or 0),
-                "continuos_matriculados":int(r["continuos_matriculados"] or 0),
-                "totales_matriculados":  int(r["totales_matriculados"]  or 0),
+                "nivel_academico":     str(r["nivel_academico"]).strip(),
+                "modalidad":           str(r["modalidad"]).strip(),
+                "nuevos_matriculados": int(r["nuevos_matriculados"] or 0),
             }
             for r in rows
         ]
 
         print(f"query_matriculados_2026 -> centro='{nombre_bd}' filas: {len(resultado)}")
         for r in resultado:
-            print(f"  {r['nivel_academico']} | {r['modalidad']} | "
-                  f"nuevos={r['nuevos_matriculados']} | "
-                  f"continuos={r['continuos_matriculados']} | "
-                  f"totales={r['totales_matriculados']}")
+            print(f"  {r['nivel_academico']} | {r['modalidad']} | nuevos={r['nuevos_matriculados']}")
+
         return resultado
 
     except Exception as e:
         print(f"❌ ERROR query_matriculados_2026: {e}")
         return []
-
 
 def query_desercion(engine, centro_id):
     try:
