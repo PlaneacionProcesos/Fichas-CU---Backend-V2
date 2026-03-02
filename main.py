@@ -175,8 +175,8 @@ def limpiar_centro_id(centro_id: str) -> str:
 
 def query_indicators(engine, centro_id):
     try:
-        centro_limpio = limpiar_centro_id(centro_id)
-        print(f"query_indicators: centro_limpio='{centro_limpio}'")
+        nombre_bd = resolver_centro_id(centro_id)
+        print(f"query_indicators: centro_id recibido = '{centro_id}', mapeado a = '{nombre_bd}'")
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
@@ -187,7 +187,7 @@ def query_indicators(engine, centro_id):
                 WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :nivel
                   AND [Nombre Corto] IS NOT NULL
                   AND RTRIM(LTRIM([Nombre Corto])) <> ''
-            """), {"nivel": centro_limpio})
+            """), {"nivel": nombre_bd})
 
             rows = result.mappings().all()
             print(f"query_indicators: encontradas {len(rows)} filas")
