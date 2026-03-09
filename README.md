@@ -21,12 +21,19 @@ Procesamiento de datos desde la DB para entregar JSON limpios y en formato snake
 Crea un archivo .env en la raíz del proyecto (o configúralas en el panel de Railway):
 
 Fragmento de código
+
 DB_SERVER=tu_servidor.database.windows.net
+
 DB_USER= (usuario de consulta de DB)
+
 DB_PASS= (contraseña de consulta en db)
+
 DB_PORT=1433
+
 DB_NAME= (nombre de db)
+
 API_KEY_SECRET=(una clave muy segura)
+
 
 ### 2. Instalación de dependencias
 Bash
