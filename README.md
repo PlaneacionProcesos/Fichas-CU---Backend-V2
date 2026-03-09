@@ -1,6 +1,8 @@
 # API Fichas Centro Universitario (FastAPI)
 Esta es una API robusta construida con FastAPI para gestionar y consultar indicadores, proyecciones y datos estadísticos de estudiantes. Está diseñada para conectarse a una base de datos SQL Server (MSSQL) y servir datos normalizados a un frontend moderno.
 
+link: api-cu-production.up.railway.app
+
 ## 🚀 Características Principales
 FastAPI Framework: Alto rendimiento y facilidad de uso.
 
