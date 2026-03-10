@@ -40,8 +40,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # ============================================================================
 ORIGENES_PERMITIDOS = [
     "http://localhost:5173",
-    "http://localhost:3000",
-    "https://ficha-cu.vercel.app",
+    "https://calm-pebble-084048910.1.azurestaticapps.net",
 ]
 
 app.add_middleware(
