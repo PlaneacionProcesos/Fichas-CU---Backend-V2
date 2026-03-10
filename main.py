@@ -219,6 +219,8 @@ def query_indicators(engine, centro_id):
 
 def query_student_summary(engine, centro_id):
     try:
+        nombre_bd = resolver_centro_id(centro_id)  # ← agregar esta línea
+        
         query_poblacion = text("""
             SELECT
                 SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización') AND [Modalidad]='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
@@ -231,7 +233,7 @@ def query_student_summary(engine, centro_id):
                 SUM(CASE WHEN [Modalidad]='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralPresencial,
                 SUM([Estudiantes Totales]) AS totalGeneral
             FROM [dbo].[Poblacion Estudiantil]
-            WHERE [Rectoría] = 'Bogotá'
+            WHERE [Centro Universitario] = :centro_id   -- ← cambió
               AND [año] = 2026
               AND [Cuatrimestre] IN ('S1', 'Q1')
         """)
@@ -241,13 +243,13 @@ def query_student_summary(engine, centro_id):
                 SUM(CASE WHEN [Género]='Masculino' THEN [Estudiantes totales] ELSE 0 END) AS hombres,
                 SUM(CASE WHEN [Género]='Femenino'  THEN [Estudiantes totales] ELSE 0 END) AS mujeres
             FROM [dbo].[Caracterizacion_Estudiantil]
-            WHERE [Rectoría] = 'Bogotá'
+            WHERE [Centro Universitario] = :centro_id   -- ← cambió
               AND [año] = 2026
         """)
 
         with engine.connect() as conn:
-            row_pob = conn.execute(query_poblacion).mappings().first()
-            row_gen = conn.execute(query_generos).mappings().first()
+            row_pob = conn.execute(query_poblacion, {"centro_id": nombre_bd}).mappings().first()  # ← pasar param
+            row_gen = conn.execute(query_generos,   {"centro_id": nombre_bd}).mappings().first()  # ← pasar param
 
         resultado = dict(row_pob) if row_pob else {}
         resultado["hombres"] = row_gen["hombres"] if row_gen else None
