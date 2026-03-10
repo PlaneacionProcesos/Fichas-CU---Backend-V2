@@ -1,5 +1,7 @@
 import os
 import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
@@ -53,11 +55,11 @@ app.add_middleware(
 # ============================================================================
 # CONEXIÓN BD
 # ============================================================================
-_engine_cache      = None
-_ultima_conexion   = None
-_total_conexiones  = 0
+_engine_cache        = None
+_ultima_conexion     = None
+_total_conexiones    = 0
 _conexiones_fallidas = 0
-_ultimo_error      = None
+_ultimo_error        = None
 
 def conectar_bd():
     global _engine_cache, _ultima_conexion
@@ -98,6 +100,35 @@ def conectar_bd():
         return None
 
 # ============================================================================
+# CACHÉ EN MEMORIA
+# ============================================================================
+_cache     = {}
+_CACHE_TTL = 300  # 5 minutos
+
+def get_cached(centro_id: str):
+    if centro_id in _cache:
+        data, ts = _cache[centro_id]
+        if time.time() - ts < _CACHE_TTL:
+            print(f"⚡ Cache hit: {centro_id}")
+            return data
+        else:
+            del _cache[centro_id]
+    return None
+
+def set_cached(centro_id: str, data: dict):
+    _cache[centro_id] = (data, time.time())
+    print(f"💾 Cache guardado: {centro_id}")
+
+# ============================================================================
+# EXECUTOR PARA QUERIES EN PARALELO
+# ============================================================================
+_executor = ThreadPoolExecutor(max_workers=6)
+
+async def run_query(func, engine, centro_id):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_executor, func, engine, centro_id)
+
+# ============================================================================
 # NORMALIZACIÓN
 # ============================================================================
 def normalizar_fila_indicadores(row):
@@ -110,16 +141,6 @@ def normalizar_fila_indicadores(row):
 
 
 def normalizar_fila_proyecciones(row: dict) -> dict:
-    """
-    Mapea los nombres de columna originales de Proyecciones_cu
-    a snake_case para que el modelo JS los consuma de forma consistente.
-
-    Valores importantes confirmados en BD:
-      Tipo de Estudiante : 'Nuevos' | 'Continuos' | 'Totales'
-      Tipo de Información: 'Proyectado' (solo 2025-2026)
-                           'Meta'       (2025-2030)
-                           'Histórico'  (2017-2026)
-    """
     MAPA = {
         "Rectoría":             "rectoria",
         "Centro Universitario": "centro_universitario",
@@ -149,20 +170,14 @@ def normalizar_fila_proyecciones(row: dict) -> dict:
 
 # Mapeo de centro_id del frontend al nombre exacto en la BD
 CENTRO_ID_MAPA = {
-    "centro-engativa":               "Especial Minuto de Dios - Engativ\u00e1",
+    "centro-engativa":               "Especial Minuto de Dios - Engativá",
     "centro-kennedy":                "Kennedy",
     "centro-santa-fe-las-cruces":    "Las Cruces - Santa Fe",
-    "centro-perdomo-ciudad-bolivar": "Perdomo - Ciudad Bol\u00edvar",
-    "centro-san-cristobal-usaquen":  "San Crist\u00f3bal Norte - Usaqu\u00e9n",
+    "centro-perdomo-ciudad-bolivar": "Perdomo - Ciudad Bolívar",
+    "centro-san-cristobal-usaquen":  "San Cristóbal Norte - Usaquén",
 }
 
 def resolver_centro_id(centro_id: str) -> str:
-    """
-    Convierte el centro_id del frontend (ej: 'centro-kennedy')
-    al nombre exacto que usa la BD (ej: 'Kennedy').
-    Si no est\u00e1 en el mapa, devuelve el valor limpio tal cual
-    por si ya viene con el nombre real.
-    """
     limpio = centro_id.strip().replace("\xa0", "").strip()
     return CENTRO_ID_MAPA.get(limpio, limpio)
 
@@ -170,7 +185,7 @@ def limpiar_centro_id(centro_id: str) -> str:
     return centro_id.strip().replace("\xa0", "").strip()
 
 # ============================================================================
-# CONSULTAS
+# CONSULTAS (sin modificar)
 # ============================================================================
 
 def query_indicators(engine, centro_id):
@@ -194,7 +209,6 @@ def query_indicators(engine, centro_id):
             if rows:
                 print("Primera fila:", dict(rows[0]))
             else:
-                # Podríamos hacer una consulta de prueba para ver qué valores de [Nivel] existen
                 prueba = conn.execute(text("SELECT DISTINCT REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') as nivel FROM [dbo].[Indicadores_Proyecciones]")).fetchall()
                 print("Niveles disponibles en la tabla:", [p[0] for p in prueba])
 
@@ -259,23 +273,9 @@ def query_student_summary(engine, centro_id):
     except Exception as e:
         print(f"❌ ERROR query_student_summary: {e}")
         return {}
-    
+
 
 def query_proyecciones(engine, centro_id):
-    """
-    Trae las filas de Proyecciones_cu para el centro dado,
-    agrupadas por las dimensiones clave y sumando el Valor.
-
-    Filtro de Atributo:
-      - Para Tablas 1, 2, 4 (Meta): solo filas cuyo Atributo contiene 'Q1/S1'
-        para evitar triplicar (Q1/S1, Q2, Q3/S2).
-        Ej: 'C-M-Q1/S1-2026', 'N-M-Q1/S1-2026', 'T-M-Q1/S1-2026'
-      - Para Tabla 3 (comparativa 2026): igual, solo Q1/S1.
-
-    Se agrupa por: nivel_academico, nivel_formacion, modalidad, periodicidad,
-                   tipo_estudiante, tipo_informacion, año
-    y se suma Valor para consolidar los programas del centro.
-    """
     try:
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
@@ -310,6 +310,7 @@ def query_proyecciones(engine, centro_id):
     except Exception as e:
         print(f"❌ ERROR query_proyecciones: {e}")
         return []
+
 
 def query_matriculados_2026(engine, centro_id):
     try:
@@ -361,14 +362,10 @@ def query_matriculados_2026(engine, centro_id):
         print(f"❌ ERROR query_matriculados_2026: {e}")
         return []
 
+
 def query_desercion(engine, centro_id):
-    """
-    Trae Deserción Presencial y Deserción Distancia de Indicadores_Proyecciones
-    para el centro dado (2026–2030).
-    Usa resolver_centro_id para mapear el centro_id del frontend al nombre real en BD.
-    """
     try:
-        nombre_bd = resolver_centro_id(centro_id)   # ← antes usaba limpiar_centro_id (bug)
+        nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT [Nombre Corto], [2026], [2027], [2028], [2029], [2030 ]
             FROM [dbo].[Indicadores_Proyecciones]
@@ -399,12 +396,8 @@ def query_desercion(engine, centro_id):
         print(f"❌ ERROR query_desercion: {e}")
         return []
 
+
 def query_oferta(engine, centro_id):
-    """
-    Cuenta SNIES únicos por año, nivel académico, modalidad y periodicidad
-    directamente desde Proyecciones_cu.
-    Cada SNIES distinto cuenta como 1 programa de oferta.
-    """
     try:
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
@@ -438,10 +431,9 @@ def query_oferta(engine, centro_id):
             for r in rows
         ]
         print(f"query_oferta (Proyecciones_cu) -> centro='{nombre_bd}' filas: {len(resultado)}")
-        # Debug: muestra muestra de valores únicos para verificar
-        niveles = set(r["nivel_academico"] for r in resultado)
-        modalidades = set(r["modalidad"] for r in resultado)
-        periodicidades = set(r["periodicidad"] for r in resultado)
+        niveles      = set(r["nivel_academico"] for r in resultado)
+        modalidades  = set(r["modalidad"]       for r in resultado)
+        periodicidades = set(r["periodicidad"]  for r in resultado)
         print(f"  niveles={niveles} | modalidades={modalidades} | periodicidades={periodicidades}")
         return resultado
 
@@ -473,19 +465,44 @@ async def get_observatorio_completo(
     centro_id: str,
     api_key: str = Depends(verificar_api_key),
 ):
+    # ── Verificar caché ──────────────────────────────────────────────────────
+    cached = get_cached(centro_id)
+    if cached:
+        return cached
+
     engine = conectar_bd()
     if not engine:
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
     try:
-        return {
-            "indicators":        query_indicators(engine, centro_id),
-            "studentSummary":    query_student_summary(engine, centro_id),
-            "proyecciones":      query_proyecciones(engine, centro_id),
-            "matriculados2026":  query_matriculados_2026(engine, centro_id),
-            "desercion":         query_desercion(engine, centro_id),
-            "oferta":            query_oferta(engine, centro_id),
+        t0 = time.time()
+
+        # ── Todas las queries en paralelo ────────────────────────────────────
+        results = await asyncio.gather(
+            run_query(query_indicators,        engine, centro_id),
+            run_query(query_student_summary,   engine, centro_id),
+            run_query(query_proyecciones,      engine, centro_id),
+            run_query(query_matriculados_2026, engine, centro_id),
+            run_query(query_desercion,         engine, centro_id),
+            run_query(query_oferta,            engine, centro_id),
+        )
+
+        response = {
+            "indicators":       results[0],
+            "studentSummary":   results[1],
+            "proyecciones":     results[2],
+            "matriculados2026": results[3],
+            "desercion":        results[4],
+            "oferta":           results[5],
         }
+
+        print(f"⏱️ Tiempo total consultas: {time.time() - t0:.2f}s")
+
+        # ── Guardar en caché ─────────────────────────────────────────────────
+        set_cached(centro_id, response)
+
+        return response
+
     except Exception as e:
         print("🔥 ERROR REAL:", e)
         raise HTTPException(status_code=500, detail=str(e))
