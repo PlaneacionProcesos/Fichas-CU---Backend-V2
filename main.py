@@ -6,43 +6,31 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-
-# ============================================================================
-# CARGAR VARIABLES DE ENTORNO
-# ============================================================================
+ 
 load_dotenv()
-
+ 
 DB_SERVER = os.getenv("DB_SERVER")
 DB_USER   = os.getenv("DB_USER")
 DB_PASS   = os.getenv("DB_PASS")
 DB_PORT   = os.getenv("DB_PORT", "1433")
 DB_NAME   = os.getenv("DB_NAME", "db360")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
-
+ 
 if not all([DB_SERVER, DB_USER, DB_PASS, API_KEY_SECRETA]):
-    raise ValueError("Faltan variables de entorno críticas")
-
-# ============================================================================
-# SEGURIDAD
-# ============================================================================
+    raise ValueError("Faltan variables de entorno criticas")
+ 
 async def verificar_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
     if x_api_key != API_KEY_SECRETA:
         raise HTTPException(status_code=403, detail="Acceso no autorizado")
     return x_api_key
-
-# ============================================================================
-# FASTAPI
-# ============================================================================
+ 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-
-# ============================================================================
-# CORS
-# ============================================================================
+ 
 ORIGENES_PERMITIDOS = [
     "http://localhost:5173",
     "https://calm-pebble-084048910.1.azurestaticapps.net",
 ]
-
+ 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGENES_PERMITIDOS,
@@ -50,20 +38,17 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
-
-# ============================================================================
-# CONEXIÓN BD
-# ============================================================================
+ 
 _engine_cache        = None
 _ultima_conexion     = None
 _total_conexiones    = 0
 _conexiones_fallidas = 0
 _ultimo_error        = None
-
+ 
 def conectar_bd():
     global _engine_cache, _ultima_conexion
     global _total_conexiones, _conexiones_fallidas, _ultimo_error
-
+ 
     if _engine_cache is not None:
         try:
             with _engine_cache.connect() as conn:
@@ -71,65 +56,47 @@ def conectar_bd():
             return _engine_cache
         except Exception:
             _engine_cache = None
-
+ 
     try:
         connection_string = (
             f"mssql+pymssql://{DB_USER}:{DB_PASS}"
             f"@{DB_SERVER}:{DB_PORT}/{DB_NAME}"
         )
-        engine = create_engine(
-            connection_string,
-            pool_pre_ping=True,
-            pool_recycle=1800,
-        )
+        engine = create_engine(connection_string, pool_pre_ping=True, pool_recycle=1800)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-
         _engine_cache      = engine
         _ultima_conexion   = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
         _ultimo_error      = None
-        print("✅ Conexión a BD establecida correctamente")
+        print("Conexion BD OK")
         return engine
-
     except Exception as e:
         _ultimo_error        = str(e)
         _conexiones_fallidas += 1
-        print(f"❌ Error conectando a BD: {e}")
+        print(f"Error BD: {e}")
         return None
-
-# ============================================================================
-# CACHÉ EN MEMORIA
-# ============================================================================
+ 
 _cache     = {}
-_CACHE_TTL = 300  # 5 minutos
-
+_CACHE_TTL = 300
+ 
 def get_cached(centro_id: str):
     if centro_id in _cache:
         data, ts = _cache[centro_id]
         if time.time() - ts < _CACHE_TTL:
-            print(f"⚡ Cache hit: {centro_id}")
             return data
-        else:
-            del _cache[centro_id]
+        del _cache[centro_id]
     return None
-
+ 
 def set_cached(centro_id: str, data: dict):
     _cache[centro_id] = (data, time.time())
-    print(f"💾 Cache guardado: {centro_id}")
-
-# ============================================================================
-# EXECUTOR PARA QUERIES EN PARALELO
-# ============================================================================
+ 
 _executor = ThreadPoolExecutor(max_workers=6)
-
+ 
 async def run_query(func, engine, centro_id):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, func, engine, centro_id)
-
-# ============================================================================
-# NORMALIZACIÓN
-# ============================================================================
+ 
 def normalizar_fila_indicadores(row):
     fila = {}
     for key, value in row.items():
@@ -137,8 +104,7 @@ def normalizar_fila_indicadores(row):
             continue
         fila[str(key).strip()] = value
     return fila
-
-
+ 
 def normalizar_fila_proyecciones(row: dict) -> dict:
     MAPA = {
         "Rectoría":             "rectoria",
@@ -165,9 +131,7 @@ def normalizar_fila_proyecciones(row: dict) -> dict:
         nueva_clave = MAPA.get(key_limpio, key_limpio.lower().replace(" ", "_"))
         normalizado[nueva_clave] = value
     return normalizado
-
-
-# Mapeo de centro_id del frontend al nombre exacto en la BD
+ 
 CENTRO_ID_MAPA = {
     "centro-engativa":               "Especial Minuto de Dios - Engativá",
     "centro-kennedy":                "Kennedy",
@@ -175,22 +139,21 @@ CENTRO_ID_MAPA = {
     "centro-perdomo-ciudad-bolivar": "Perdomo - Ciudad Bolívar",
     "centro-san-cristobal-usaquen":  "San Cristóbal Norte - Usaquén",
 }
-
+ 
 def resolver_centro_id(centro_id: str) -> str:
     limpio = centro_id.strip().replace("\xa0", "").strip()
     return CENTRO_ID_MAPA.get(limpio, limpio)
-
+ 
 def limpiar_centro_id(centro_id: str) -> str:
     return centro_id.strip().replace("\xa0", "").strip()
-
+ 
 # ============================================================================
-# CONSULTAS (sin modificar)
+# CONSULTAS
 # ============================================================================
-
+ 
 def query_indicators(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-        print(f"query_indicators: centro_id recibido = '{centro_id}', mapeado a = '{nombre_bd}'")
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
@@ -202,38 +165,32 @@ def query_indicators(engine, centro_id):
                   AND [Nombre Corto] IS NOT NULL
                   AND RTRIM(LTRIM([Nombre Corto])) <> ''
             """), {"nivel": nombre_bd})
-
             rows = result.mappings().all()
-            print(f"query_indicators: encontradas {len(rows)} filas")
-            if rows:
-                print("Primera fila:", dict(rows[0]))
-            else:
-                prueba = conn.execute(text("SELECT DISTINCT REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') as nivel FROM [dbo].[Indicadores_Proyecciones]")).fetchall()
-                print("Niveles disponibles en la tabla:", [p[0] for p in prueba])
-
-            filas_procesadas = []
-            for row in rows:
-                fila = normalizar_fila_indicadores(dict(row))
-                filas_procesadas.append({
-                    "Nombre Corto": fila.get("Nombre Corto"),
-                    "2025": fila.get("2025"),
-                    "2026": fila.get("2026"),
-                    "2027": fila.get("2027"),
-                    "2028": fila.get("2028"),
-                    "2029": fila.get("2029"),
-                    "2030": fila.get("2030"),
-                })
-            return filas_procesadas
-
+        filas_procesadas = []
+        for row in rows:
+            fila = normalizar_fila_indicadores(dict(row))
+            filas_procesadas.append({
+                "Nombre Corto": fila.get("Nombre Corto"),
+                "2025": fila.get("2025"),
+                "2026": fila.get("2026"),
+                "2027": fila.get("2027"),
+                "2028": fila.get("2028"),
+                "2029": fila.get("2029"),
+                "2030": fila.get("2030"),
+            })
+        print(f"query_indicators: {len(filas_procesadas)} filas")
+        return filas_procesadas
     except Exception as e:
-        print(f"❌ ERROR query_indicators: {e}")
+        print(f"ERROR query_indicators: {e}")
         return []
-
-
+ 
+ 
 def query_student_summary(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-
+        print(f"query_student_summary: '{nombre_bd}'")
+ 
+        # FIX: [Periodicidad] IN ('Semestral','Cuatrimestral') en lugar de [Cuatrimestre] IN ('S1','Q1')
         query_poblacion = text("""
             SELECT
                 SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
@@ -247,10 +204,10 @@ def query_student_summary(engine, centro_id):
                 SUM([Estudiantes Totales]) AS totalGeneral
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
-              AND [año] = 2026
-              AND [Cuatrimestre] IN ('S1', 'Q1')
+              AND [Año] = 2026
+              AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
         """)
-
+ 
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN [Género]='Masculino' THEN [Estudiantes totales] ELSE 0 END) AS hombres,
@@ -259,21 +216,24 @@ def query_student_summary(engine, centro_id):
             WHERE [Centro Universitario] = :centro_id
               AND [año] = 2026
         """)
-
+ 
         with engine.connect() as conn:
             row_pob = conn.execute(query_poblacion, {"centro_id": nombre_bd}).mappings().first()
             row_gen = conn.execute(query_generos,   {"centro_id": nombre_bd}).mappings().first()
-
+ 
+        print(f"row_pob: {dict(row_pob) if row_pob else 'NONE'}")
+        print(f"row_gen: {dict(row_gen) if row_gen else 'NONE'}")
+ 
         resultado = dict(row_pob) if row_pob else {}
         resultado["hombres"] = row_gen["hombres"] if row_gen else None
         resultado["mujeres"] = row_gen["mujeres"] if row_gen else None
         return resultado
-
+ 
     except Exception as e:
-        print(f"❌ ERROR query_student_summary: {e}")
+        print(f"ERROR query_student_summary: {e}")
         return {}
-
-
+ 
+ 
 def query_proyecciones(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
@@ -301,34 +261,35 @@ def query_proyecciones(engine, centro_id):
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
-
         normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
-        print(f"query_proyecciones -> filas: {len(normalizadas)}")
+        print(f"query_proyecciones: {len(normalizadas)} filas")
         return normalizadas
-
     except Exception as e:
-        print(f"❌ ERROR query_proyecciones: {e}")
+        print(f"ERROR query_proyecciones: {e}")
         return []
-
-
+ 
+ 
 def query_matriculados_2026(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+ 
+        # FIX: [Periodicidad] IN ('Semestral','Cuatrimestral') en lugar de [Cuatrimestre]
+        #      [Estudiantes Continuos] en lugar de [Estudiantes Antiguos]
         query = text("""
             SELECT
                 CASE
                     WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
                     THEN 'Posgrado'
                     ELSE 'Pregrado'
-                END                          AS nivel_academico,
-                RTRIM(LTRIM([Modalidad]))     AS modalidad,
-                SUM([Estudiantes Nuevos])     AS nuevos_matriculados,
-                SUM([Estudiantes Antiguos])   AS continuos_matriculados,
-                SUM([Estudiantes Totales])    AS totales_matriculados
+                END                              AS nivel_academico,
+                RTRIM(LTRIM([Modalidad]))         AS modalidad,
+                SUM([Estudiantes Nuevos])         AS nuevos_matriculados,
+                SUM([Estudiantes Continuos])      AS continuos_matriculados,
+                SUM([Estudiantes Totales])        AS totales_matriculados
             FROM [dbo].[Poblacion Estudiantil]
             WHERE [Centro Universitario] = :centro_id
-              AND [año]          = 2026
-              AND [Cuatrimestre] IN ('S1', 'Q1')
+              AND [Año] = 2026
+              AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
             GROUP BY
                 CASE
                     WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
@@ -339,7 +300,7 @@ def query_matriculados_2026(engine, centro_id):
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
-
+ 
         resultado = [
             {
                 "nivel_academico":        str(r["nivel_academico"]).strip(),
@@ -350,18 +311,14 @@ def query_matriculados_2026(engine, centro_id):
             }
             for r in rows
         ]
-
-        print(f"query_matriculados_2026 -> centro='{nombre_bd}' filas: {len(resultado)}")
-        for r in resultado:
-            print(f"  {r['nivel_academico']} | {r['modalidad']} | nuevos={r['nuevos_matriculados']} | continuos={r['continuos_matriculados']} | totales={r['totales_matriculados']}")
-
+        print(f"query_matriculados_2026: {len(resultado)} filas")
         return resultado
-
+ 
     except Exception as e:
-        print(f"❌ ERROR query_matriculados_2026: {e}")
+        print(f"ERROR query_matriculados_2026: {e}")
         return []
-
-
+ 
+ 
 def query_desercion(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
@@ -373,29 +330,22 @@ def query_desercion(engine, centro_id):
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
-
         desercion = []
         for row in rows:
             fila = normalizar_fila_indicadores(dict(row))
             nombre = fila.get("Nombre Corto", "")
             modalidad = "Presencial" if "Presencial" in nombre else "Distancia"
-            for año in ["2026", "2027", "2028", "2029", "2030"]:
-                valor = fila.get(año)
+            for anio in ["2026", "2027", "2028", "2029", "2030"]:
+                valor = fila.get(anio)
                 if valor is not None and valor != "":
-                    desercion.append({
-                        "año":        año,
-                        "modalidad":  modalidad,
-                        "porcentaje": valor,
-                    })
-
-        print(f"query_desercion -> centro='{nombre_bd}' filas: {len(desercion)}")
+                    desercion.append({"año": anio, "modalidad": modalidad, "porcentaje": valor})
+        print(f"query_desercion: {len(desercion)} filas")
         return desercion
-
     except Exception as e:
-        print(f"❌ ERROR query_desercion: {e}")
+        print(f"ERROR query_desercion: {e}")
         return []
-
-
+ 
+ 
 def query_oferta(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
@@ -410,15 +360,10 @@ def query_oferta(engine, centro_id):
             WHERE [Centro Universitario] = :centro_id
               AND [Snies] IS NOT NULL
               AND [Año] BETWEEN 2026 AND 2030
-            GROUP BY
-                [Año],
-                [Nivel Académico],
-                [Modalidad],
-                [Periodicidad]
+            GROUP BY [Año], [Nivel Académico], [Modalidad], [Periodicidad]
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
-
         resultado = [
             {
                 "año":             str(r["año"]).strip(),
@@ -429,54 +374,40 @@ def query_oferta(engine, centro_id):
             }
             for r in rows
         ]
-        print(f"query_oferta (Proyecciones_cu) -> centro='{nombre_bd}' filas: {len(resultado)}")
-        niveles      = set(r["nivel_academico"] for r in resultado)
-        modalidades  = set(r["modalidad"]       for r in resultado)
-        periodicidades = set(r["periodicidad"]  for r in resultado)
-        print(f"  niveles={niveles} | modalidades={modalidades} | periodicidades={periodicidades}")
+        print(f"query_oferta: {len(resultado)} filas")
         return resultado
-
     except Exception as e:
-        print(f"❌ ERROR query_oferta: {e}")
+        print(f"ERROR query_oferta: {e}")
         return []
-
+ 
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
-
+ 
 @app.get("/")
 async def root():
     return {"message": "API Observatorio funcionando correctamente"}
-
-
+ 
 @app.get("/health")
 async def health():
     engine = conectar_bd()
-    return {
-        "status": "ok",
-        "conexion_bd": engine is not None,
-        "ultimo_error": _ultimo_error,
-    }
-
-
+    return {"status": "ok", "conexion_bd": engine is not None, "ultimo_error": _ultimo_error}
+ 
 @app.get("/api/observatorio/completo/{centro_id}")
 async def get_observatorio_completo(
     centro_id: str,
     api_key: str = Depends(verificar_api_key),
 ):
-    # ── Verificar caché ──────────────────────────────────────────────────────
     cached = get_cached(centro_id)
     if cached:
         return cached
-
+ 
     engine = conectar_bd()
     if not engine:
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-
+ 
     try:
         t0 = time.time()
-
-        # ── Todas las queries en paralelo ────────────────────────────────────
         results = await asyncio.gather(
             run_query(query_indicators,        engine, centro_id),
             run_query(query_student_summary,   engine, centro_id),
@@ -485,7 +416,6 @@ async def get_observatorio_completo(
             run_query(query_desercion,         engine, centro_id),
             run_query(query_oferta,            engine, centro_id),
         )
-
         response = {
             "indicators":       results[0],
             "studentSummary":   results[1],
@@ -494,29 +424,21 @@ async def get_observatorio_completo(
             "desercion":        results[4],
             "oferta":           results[5],
         }
-
-        print(f"⏱️ Tiempo total consultas: {time.time() - t0:.2f}s")
-
-        # ── Guardar en caché ─────────────────────────────────────────────────
+        print(f"Tiempo total: {time.time() - t0:.2f}s")
         set_cached(centro_id, response)
-
         return response
-
+ 
     except Exception as e:
-        print("🔥 ERROR REAL:", e)
+        print("ERROR:", e)
         raise HTTPException(status_code=500, detail=str(e))
-
-
+ 
 @app.get("/api/observatorio/page2/{centro_id}")
 async def get_page2_data(
     centro_id: str,
     api_key: str = Depends(verificar_api_key),
 ):
     return await get_observatorio_completo(centro_id, api_key)
-
-# ============================================================================
-# RUN
-# ============================================================================
+ 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
