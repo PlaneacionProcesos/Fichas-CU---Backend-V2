@@ -28,6 +28,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
  
 ORIGENES_PERMITIDOS = [
     "http://localhost:5173",
+    "http://localhost:4173",
     "https://calm-pebble-084048910.1.azurestaticapps.net",
 ]
  
