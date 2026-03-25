@@ -189,16 +189,15 @@ def query_student_summary(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
         print(f"query_student_summary: '{nombre_bd}'")
- 
-        # FIX: [Periodicidad] IN ('Semestral','Cuatrimestral') en lugar de [Cuatrimestre] IN ('S1','Q1')
+
         query_poblacion = text("""
             SELECT
-                SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
-                SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS pregradoPresencial,
-                SUM(CASE WHEN [Nivel] NOT IN ('Maestría','Especialización','Doctorado')                                            THEN [Estudiantes Totales] ELSE 0 END) AS pregradoTotal,
-                SUM(CASE WHEN [Nivel] IN     ('Maestría','Especialización','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS posgradoDistancia,
-                SUM(CASE WHEN [Nivel] IN     ('Maestría','Especialización','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS posgradoPresencial,
-                SUM(CASE WHEN [Nivel] IN     ('Maestría','Especialización','Doctorado')                                            THEN [Estudiantes Totales] ELSE 0 END) AS posgradoTotal,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') NOT IN ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') NOT IN ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS pregradoPresencial,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') NOT IN ('Maestría','Maestria','Especialización','Especializacion','Doctorado')                                            THEN [Estudiantes Totales] ELSE 0 END) AS pregradoTotal,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') IN     ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS posgradoDistancia,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') IN     ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS posgradoPresencial,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') IN     ('Maestría','Maestria','Especialización','Especializacion','Doctorado')                                            THEN [Estudiantes Totales] ELSE 0 END) AS posgradoTotal,
                 SUM(CASE WHEN RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralDistancia,
                 SUM(CASE WHEN RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralPresencial,
                 SUM([Estudiantes Totales]) AS totalGeneral
@@ -207,7 +206,7 @@ def query_student_summary(engine, centro_id):
               AND [Año] = 2026
               AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
         """)
- 
+
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN [Género]='Masculino' THEN [Estudiantes totales] ELSE 0 END) AS hombres,
@@ -216,19 +215,19 @@ def query_student_summary(engine, centro_id):
             WHERE [Centro Universitario] = :centro_id
               AND [año] = 2026
         """)
- 
+
         with engine.connect() as conn:
             row_pob = conn.execute(query_poblacion, {"centro_id": nombre_bd}).mappings().first()
             row_gen = conn.execute(query_generos,   {"centro_id": nombre_bd}).mappings().first()
- 
+
         print(f"row_pob: {dict(row_pob) if row_pob else 'NONE'}")
         print(f"row_gen: {dict(row_gen) if row_gen else 'NONE'}")
- 
+
         resultado = dict(row_pob) if row_pob else {}
         resultado["hombres"] = row_gen["hombres"] if row_gen else None
         resultado["mujeres"] = row_gen["mujeres"] if row_gen else None
         return resultado
- 
+
     except Exception as e:
         print(f"ERROR query_student_summary: {e}")
         return {}
