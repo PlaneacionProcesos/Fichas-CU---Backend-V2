@@ -160,7 +160,7 @@ def query_indicators(engine, centro_id):
                 SELECT
                     RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
                     [Linea Base] AS [2024],
-                    [2024], [2025], [2026], [2027], [2028], [2029],
+                    [2025], [2026], [2027], [2028], [2029],
                     RTRIM(LTRIM([2030])) AS [2030]
                 FROM [dbo].[Indicadores_Proyecciones]
                 WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :nivel
