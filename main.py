@@ -159,7 +159,8 @@ def query_indicators(engine, centro_id):
             result = conn.execute(text("""
                 SELECT
                     RTRIM(LTRIM([Nombre Corto])) AS [Nombre Corto],
-                    [2025], [2026], [2027], [2028], [2029],
+                    [Linea Base] AS [2024],
+                    [2024], [2025], [2026], [2027], [2028], [2029],
                     RTRIM(LTRIM([2030])) AS [2030]
                 FROM [dbo].[Indicadores_Proyecciones]
                 WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :nivel
@@ -172,6 +173,7 @@ def query_indicators(engine, centro_id):
             fila = normalizar_fila_indicadores(dict(row))
             filas_procesadas.append({
                 "Nombre Corto": fila.get("Nombre Corto"),
+                "2024": fila.get("2024"),   # ← nuevo
                 "2025": fila.get("2025"),
                 "2026": fila.get("2026"),
                 "2027": fila.get("2027"),
