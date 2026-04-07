@@ -79,7 +79,8 @@ def conectar_bd():
         return None
  
 _cache     = {}
-_CACHE_TTL = 300
+# ✅ CAMBIO 1: TTL de 30 días (antes era 300 segundos = 5 minutos)
+_CACHE_TTL = 2592000  # 30 días en segundos
  
 def get_cached(centro_id: str):
     if centro_id in _cache:
@@ -173,7 +174,7 @@ def query_indicators(engine, centro_id):
             fila = normalizar_fila_indicadores(dict(row))
             filas_procesadas.append({
                 "Nombre Corto": fila.get("Nombre Corto"),
-                "2024": fila.get("2024"),   # ← nuevo
+                "2024": fila.get("2024"),
                 "2025": fila.get("2025"),
                 "2026": fila.get("2026"),
                 "2027": fila.get("2027"),
@@ -274,9 +275,6 @@ def query_proyecciones(engine, centro_id):
 def query_matriculados_2026(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
- 
-        # FIX: [Periodicidad] IN ('Semestral','Cuatrimestral') en lugar de [Cuatrimestre]
-        #      [Estudiantes Continuos] en lugar de [Estudiantes Antiguos]
         query = text("""
             SELECT
                 CASE
@@ -394,6 +392,37 @@ async def root():
 async def health():
     engine = conectar_bd()
     return {"status": "ok", "conexion_bd": engine is not None, "ultimo_error": _ultimo_error}
+
+# ✅ CAMBIO 2: Endpoint para refrescar caché manualmente antes de la reunión mensual
+@app.get("/api/cache/refresh")
+async def refresh_cache(api_key: str = Depends(verificar_api_key)):
+    centros_en_cache = list(_cache.keys())
+    _cache.clear()
+    print(f"🗑️ Caché limpiado manualmente. Centros eliminados: {centros_en_cache}")
+    return {
+        "status": "ok",
+        "mensaje": "Caché limpiado. La próxima consulta de cada centro recargará datos frescos desde SQL Server.",
+        "centros_eliminados": centros_en_cache
+    }
+
+# ✅ CAMBIO 3: Endpoint para ver estado del caché (útil para verificar)
+@app.get("/api/cache/status")
+async def cache_status(api_key: str = Depends(verificar_api_key)):
+    ahora = time.time()
+    estado = {}
+    for centro_id, (data, ts) in _cache.items():
+        segundos_restantes = int(_CACHE_TTL - (ahora - ts))
+        dias_restantes = segundos_restantes // 86400
+        estado[centro_id] = {
+            "cargado_en": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)),
+            "expira_en_dias": dias_restantes,
+            "expira_en_segundos": segundos_restantes,
+        }
+    return {
+        "total_centros_en_cache": len(_cache),
+        "ttl_configurado_dias": _CACHE_TTL // 86400,
+        "centros": estado
+    }
  
 @app.get("/api/observatorio/completo/{centro_id}")
 async def get_observatorio_completo(
