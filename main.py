@@ -13,7 +13,7 @@ DB_SERVER = os.getenv("DB_SERVER")
 DB_USER   = os.getenv("DB_USER")
 DB_PASS   = os.getenv("DB_PASS")
 DB_PORT   = os.getenv("DB_PORT", "1433")
-DB_NAME   = os.getenv("DB_NAME", "db360")
+DB_NAME   = os.getenv("DB_NAME", "DB_APP")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
  
 if not all([DB_SERVER, DB_USER, DB_PASS, API_KEY_SECRETA]):
