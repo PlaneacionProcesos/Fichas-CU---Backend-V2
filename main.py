@@ -196,19 +196,20 @@ def query_student_summary(engine, centro_id):
 
         query_poblacion = text("""
             SELECT
-                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') NOT IN ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
-                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') NOT IN ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS pregradoPresencial,
-                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') NOT IN ('Maestría','Maestria','Especialización','Especializacion','Doctorado')                                            THEN [Estudiantes Totales] ELSE 0 END) AS pregradoTotal,
-                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') IN     ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS posgradoDistancia,
-                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') IN     ('Maestría','Maestria','Especialización','Especializacion','Doctorado') AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS posgradoPresencial,
-                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') IN     ('Maestría','Maestria','Especialización','Especializacion','Doctorado')                                            THEN [Estudiantes Totales] ELSE 0 END) AS posgradoTotal,
-                SUM(CASE WHEN RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralDistancia,
-                SUM(CASE WHEN RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralPresencial,
-                SUM([Estudiantes Totales]) AS totalGeneral
-            FROM [dbo].[Poblacion Estudiantil]
-            WHERE [Centro Universitario] = :centro_id
-              AND [Año] = 2026
-              AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
+                    SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregradoDistancia,
+                    SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS pregradoPresencial,
+                    SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'                                             THEN [Estudiantes Totales] ELSE 0 END) AS pregradoTotal,
+                    SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Posgrado'  AND RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS posgradoDistancia,
+                    SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Posgrado'  AND RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS posgradoPresencial,
+                    SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Posgrado'                                             THEN [Estudiantes Totales] ELSE 0 END) AS posgradoTotal,
+                    SUM(CASE WHEN RTRIM(LTRIM([Modalidad]))='Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralDistancia,
+                    SUM(CASE WHEN RTRIM(LTRIM([Modalidad]))='Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS totalGeneralPresencial,
+                    SUM([Estudiantes Totales]) AS totalGeneral
+                FROM [dbo].[Poblacion Estudiantil]
+                WHERE [Centro Universitario] = :centro_id
+                AND [Año] = 2026
+                AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
+                AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
         """)
 
         query_generos = text("""
