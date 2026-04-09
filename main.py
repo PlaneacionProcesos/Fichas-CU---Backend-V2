@@ -278,26 +278,19 @@ def query_matriculados_2026(engine, centro_id):
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
-                CASE
-                    WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
-                    THEN 'Posgrado'
-                    ELSE 'Pregrado'
-                END                              AS nivel_academico,
-                RTRIM(LTRIM([Modalidad]))         AS modalidad,
-                SUM([Estudiantes Nuevos])         AS nuevos_matriculados,
-                SUM([Estudiantes Continuos])      AS continuos_matriculados,
-                SUM([Estudiantes Totales])        AS totales_matriculados
-            FROM [dbo].[Poblacion Estudiantil]
-            WHERE [Centro Universitario] = :centro_id
-              AND [Año] = 2026
-              AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
-            GROUP BY
-                CASE
-                    WHEN [Nivel] IN ('Maestría', 'Especialización', 'Doctorado')
-                    THEN 'Posgrado'
-                    ELSE 'Pregrado'
-                END,
-                RTRIM(LTRIM([Modalidad]))
+                    REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
+                    RTRIM(LTRIM([Modalidad]))                               AS modalidad,
+                    SUM([Estudiantes Nuevos])                               AS nuevos_matriculados,
+                    SUM([Estudiantes Continuos])                            AS continuos_matriculados,
+                    SUM([Estudiantes Totales])                              AS totales_matriculados
+                FROM [dbo].[Poblacion Estudiantil]
+                WHERE [Centro Universitario] = :centro_id
+                AND [Año] = 2026
+                AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
+                AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
+                GROUP BY
+                    REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
+                    RTRIM(LTRIM([Modalidad]))
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
