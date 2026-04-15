@@ -7,3 +7,4 @@ python-dotenv
 pymssql
 dnspython
 pyodbc
+psycopg2-binary
