@@ -221,7 +221,7 @@ def query_student_summary(engine, centro_id):
                 SUM(CASE WHEN TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS total_general_distancia,
                 SUM(CASE WHEN TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS total_general_presencial,
                 SUM("Estudiantes Totales") AS total_general
-            FROM "Poblacion Estudiantil"
+            FROM "poblacion_estudiantil"
             WHERE "Centro Universitario" = :centro_id
               AND "Año" = 2026
               AND "Periodicidad" IN ('Semestral', 'Cuatrimestral')
@@ -232,7 +232,7 @@ def query_student_summary(engine, centro_id):
             SELECT
                 SUM(CASE WHEN "Género" = 'Masculino' THEN "Estudiantes Totales" ELSE 0 END) AS hombres,
                 SUM(CASE WHEN "Género" = 'Femenino'  THEN "Estudiantes Totales" ELSE 0 END) AS mujeres
-            FROM "Caracterizacion Estudiantil"
+            FROM "caracterizacion_estudiantes"
             WHERE "Centro Universitario" = :centro_id
               AND "Año" = 2026
         """)
