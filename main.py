@@ -212,21 +212,46 @@ def query_student_summary(engine, centro_id):
 
         query_poblacion = text("""
             SELECT
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS "pregradoDistancia",
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS "pregradoPresencial",
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS "pregradoTotal",
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS "posgradoDistancia",
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS "posgradoPresencial",
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS "posgradoTotal",
-                SUM(CASE WHEN TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS "totalGeneralDistancia",
-                SUM(CASE WHEN TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS "totalGeneralPresencial",
-                SUM("Estudiantes Totales") AS "totalGeneral"
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS pregrado_distancia,
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS pregrado_presencial,
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS pregrado_total,
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS posgrado_distancia,
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS posgrado_presencial,
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS posgrado_total,
+                SUM(CASE WHEN TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS total_general_distancia,
+                SUM(CASE WHEN TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS total_general_presencial,
+                SUM("Estudiantes Totales") AS total_general
             FROM "Poblacion Estudiantil"
             WHERE "Centro Universitario" = :centro_id
               AND "Año" = 2026
               AND "Periodicidad" IN ('Semestral', 'Cuatrimestral')
               AND REPLACE(TRIM("Nivel Académico"), CHR(160), '') IN ('Pregrado', 'Posgrado')
         """)
+
+        query_generos = text("""
+            SELECT
+                SUM(CASE WHEN "Género" = 'Masculino' THEN "Estudiantes Totales" ELSE 0 END) AS hombres,
+                SUM(CASE WHEN "Género" = 'Femenino'  THEN "Estudiantes Totales" ELSE 0 END) AS mujeres
+            FROM "Caracterizacion Estudiantil"
+            WHERE "Centro Universitario" = :centro_id
+              AND "Año" = 2026
+        """)
+
+        with engine.connect() as conn:
+            row_pob = conn.execute(query_poblacion, {"centro_id": nombre_bd}).mappings().first()
+            row_gen = conn.execute(query_generos,   {"centro_id": nombre_bd}).mappings().first()
+
+        print(f"row_pob: {dict(row_pob) if row_pob else 'NONE'}")
+        print(f"row_gen: {dict(row_gen) if row_gen else 'NONE'}")
+
+        resultado = dict(row_pob) if row_pob else {}
+        resultado["hombres"] = row_gen["hombres"] if row_gen else None
+        resultado["mujeres"] = row_gen["mujeres"] if row_gen else None
+        return resultado
+
+    except Exception as e:
+        print(f"ERROR query_student_summary: {e}")
+        return {}
 
         # Tabla renombrada: Caracterizacion_Estudiantil → caracterizacion_estudiantes
         query_generos = text("""
