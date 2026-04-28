@@ -253,32 +253,6 @@ def query_student_summary(engine, centro_id):
         print(f"ERROR query_student_summary: {e}")
         return {}
 
-        # Tabla renombrada: Caracterizacion_Estudiantil → caracterizacion_estudiantes
-        query_generos = text("""
-            SELECT
-                SUM(CASE WHEN "Género" = 'Masculino' THEN "Estudiantes Totales" ELSE 0 END) AS hombres,
-                SUM(CASE WHEN "Género" = 'Femenino'  THEN "Estudiantes Totales" ELSE 0 END) AS mujeres
-            FROM caracterizacion_estudiantes
-            WHERE "Centro Universitario" = :centro_id
-              AND "Año" = 2026
-        """)
-
-        with engine.connect() as conn:
-            row_pob = conn.execute(query_poblacion, {"centro_id": nombre_bd}).mappings().first()
-            row_gen = conn.execute(query_generos,   {"centro_id": nombre_bd}).mappings().first()
-
-        print(f"row_pob: {dict(row_pob) if row_pob else 'NONE'}")
-        print(f"row_gen: {dict(row_gen) if row_gen else 'NONE'}")
-
-        resultado = dict(row_pob) if row_pob else {}
-        resultado["hombres"] = row_gen["hombres"] if row_gen else None
-        resultado["mujeres"] = row_gen["mujeres"] if row_gen else None
-        return resultado
-
-    except Exception as e:
-        print(f"ERROR query_student_summary: {e}")
-        return {}
-
 
 def query_proyecciones(engine, centro_id):
     try:
