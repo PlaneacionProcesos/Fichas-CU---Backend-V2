@@ -366,10 +366,10 @@ def query_oferta(engine, centro_id):
                 REPLACE(TRIM("Nivel Académico"), CHR(160), '')               AS nivel_academico,
                 REPLACE(TRIM("Modalidad"),       CHR(160), '')               AS modalidad,
                 REPLACE(TRIM("Periodicidad"),    CHR(160), '')               AS periodicidad,
-                COUNT(DISTINCT "Snies")                                      AS snies_unico
+                COUNT(DISTINCT "SNIES")                                      AS snies_unico
             FROM proyecciones_cu
             WHERE "Centro Universitario" = :centro_id
-              AND "Snies" IS NOT NULL
+              AND "SNIES" IS NOT NULL
               AND "Año" BETWEEN 2026 AND 2030
             GROUP BY
                 "Año",
