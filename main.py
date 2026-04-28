@@ -221,7 +221,7 @@ def query_student_summary(engine, centro_id):
                 SUM(CASE WHEN TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS "totalGeneralDistancia",
                 SUM(CASE WHEN TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS "totalGeneralPresencial",
                 SUM("Estudiantes Totales") AS "totalGeneral"
-            FROM "Poblacion Estudiantil"
+            FROM "poblacion_estudiantil"
             WHERE "Centro Universitario" = :centro_id
               AND "Año" = 2026
               AND "Periodicidad" IN ('Semestral', 'Cuatrimestral')
@@ -300,7 +300,7 @@ def query_matriculados_2026(engine, centro_id):
                 SUM("Estudiantes Nuevos")                      AS nuevos_matriculados,
                 SUM("Estudiantes Continuos")                   AS continuos_matriculados,
                 SUM("Estudiantes Totales")                     AS totales_matriculados
-            FROM "Poblacion Estudiantil"
+            FROM "poblacion_estudiantil"
             WHERE "Centro Universitario" = :centro_id
               AND "Año" = 2026
               AND "Periodicidad" IN ('Semestral', 'Cuatrimestral')
