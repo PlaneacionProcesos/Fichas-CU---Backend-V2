@@ -362,16 +362,20 @@ def query_oferta(engine, centro_id):
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
-                CAST("Año" AS TEXT)            AS año,
-                "Nivel Académico"              AS nivel_academico,
-                "Modalidad"                    AS modalidad,
-                "Periodicidad"                 AS periodicidad,
-                COUNT(DISTINCT "Snies")        AS snies_unico
+                CAST("Año" AS TEXT)                                          AS año,
+                REPLACE(TRIM("Nivel Académico"), CHR(160), '')               AS nivel_academico,
+                REPLACE(TRIM("Modalidad"),       CHR(160), '')               AS modalidad,
+                REPLACE(TRIM("Periodicidad"),    CHR(160), '')               AS periodicidad,
+                COUNT(DISTINCT "Snies")                                      AS snies_unico
             FROM proyecciones_cu
             WHERE "Centro Universitario" = :centro_id
               AND "Snies" IS NOT NULL
               AND "Año" BETWEEN 2026 AND 2030
-            GROUP BY "Año", "Nivel Académico", "Modalidad", "Periodicidad"
+            GROUP BY
+                "Año",
+                REPLACE(TRIM("Nivel Académico"), CHR(160), ''),
+                REPLACE(TRIM("Modalidad"),       CHR(160), ''),
+                REPLACE(TRIM("Periodicidad"),    CHR(160), '')
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
