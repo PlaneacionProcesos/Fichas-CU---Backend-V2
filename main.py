@@ -208,27 +208,25 @@ def query_indicators(engine, centro_id):
 def query_student_summary(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-        
-        # Debug: ver qué registros están entrando
-        with engine.connect() as conn:
-            check = conn.execute(text("""
-                SELECT 
-                    REPLACE(TRIM("Nivel Académico"), CHR(160), '') AS nivel,
-                    TRIM("Modalidad") AS modalidad,
-                    "Periodicidad",
-                    "Año",
-                    SUM("Estudiantes Totales") AS total
-                FROM poblacion_estudiantil
-                WHERE "Centro Universitario" = :centro_id
-                  AND "Año" = 2026
-                GROUP BY 
-                    REPLACE(TRIM("Nivel Académico"), CHR(160), ''),
-                    TRIM("Modalidad"),
-                    "Periodicidad",
-                    "Año"
-                ORDER BY nivel, modalidad
-            """), {"centro_id": nombre_bd}).mappings().all()
-            print(f"=== DESGLOSE poblacion_estudiantil 2026: {[dict(r) for r in check]}")
+        print(f"query_student_summary: '{nombre_bd}'")
+
+        query_poblacion = text("""
+            SELECT
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS "pregradoDistancia",
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS "pregradoPresencial",
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS "pregradoTotal",
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS "posgradoDistancia",
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS "posgradoPresencial",
+                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS "posgradoTotal",
+                SUM(CASE WHEN TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS "totalGeneralDistancia",
+                SUM(CASE WHEN TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS "totalGeneralPresencial",
+                SUM("Estudiantes Totales") AS "totalGeneral"
+            FROM "Poblacion Estudiantil"
+            WHERE "Centro Universitario" = :centro_id
+              AND "Año" = 2026
+              AND "Periodicidad" IN ('Semestral', 'Cuatrimestral')
+              AND REPLACE(TRIM("Nivel Académico"), CHR(160), '') IN ('Pregrado', 'Posgrado')
+        """)
 
         # Tabla renombrada: Caracterizacion_Estudiantil → caracterizacion_estudiantes
         query_generos = text("""
