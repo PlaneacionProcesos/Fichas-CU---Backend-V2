@@ -204,7 +204,6 @@ def query_indicators(engine, centro_id):
         print(f"ERROR query_indicators: {e}")
         return []
 
-
 def query_student_summary(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
@@ -221,20 +220,27 @@ def query_student_summary(engine, centro_id):
                 SUM(CASE WHEN TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS total_general_distancia,
                 SUM(CASE WHEN TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS total_general_presencial,
                 SUM("Estudiantes Totales") AS total_general
-            FROM "poblacion_estudiantil"
+            FROM poblacion_estudiantil
             WHERE "Centro Universitario" = :centro_id
               AND "Año" = 2026
-              AND "Periodicidad" IN ('Semestral', 'Cuatrimestral')
               AND REPLACE(TRIM("Nivel Académico"), CHR(160), '') IN ('Pregrado', 'Posgrado')
+              AND (
+                  ("Periodicidad" = 'Semestral'     AND "Periodo" = 'S1')
+               OR ("Periodicidad" = 'Cuatrimestral' AND "Periodo" = 'Q1')
+              )
         """)
 
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN "Género" = 'Masculino' THEN "Estudiantes Totales" ELSE 0 END) AS hombres,
                 SUM(CASE WHEN "Género" = 'Femenino'  THEN "Estudiantes Totales" ELSE 0 END) AS mujeres
-            FROM "caracterizacion_estudiantes"
+            FROM caracterizacion_estudiantes
             WHERE "Centro Universitario" = :centro_id
               AND "Año" = 2026
+              AND (
+                  ("Periodicidad" = 'Semestral'     AND "Periodo" = 'S1')
+               OR ("Periodicidad" = 'Cuatrimestral' AND "Periodo" = 'Q1')
+              )
         """)
 
         with engine.connect() as conn:
@@ -252,7 +258,6 @@ def query_student_summary(engine, centro_id):
     except Exception as e:
         print(f"ERROR query_student_summary: {e}")
         return {}
-
 
 def query_proyecciones(engine, centro_id):
     try:
