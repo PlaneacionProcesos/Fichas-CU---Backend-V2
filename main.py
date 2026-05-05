@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Supabase / PostgreSQL ---
-DB_HOST     = os.getenv("DB_HOST ")       # ej: db.xxxxxxxxxxxx.supabase.co
+DB_HOST     = os.getenv("DB_HOST")       # ej: db.xxxxxxxxxxxx.supabase.co
 DB_USER     = os.getenv("DB_USER")       # ej: postgres
 DB_PASS     = os.getenv("DB_PASS")
 DB_PORT     = os.getenv("DB_PORT", "5432")
