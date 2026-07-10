@@ -30,7 +30,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 ORIGENES_PERMITIDOS = [
     "http://localhost:5173",
     "http://localhost:4173",
-     "https://ficha-cu-two.vercel.app/",
+     "https://ficha-cu-two.vercel.app",
 ]
 
 app.add_middleware(
