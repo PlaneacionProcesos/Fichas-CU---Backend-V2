@@ -9,15 +9,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Supabase / PostgreSQL ---
-DB_HOST     = os.getenv("DB_HOST")       # ej: db.xxxxxxxxxxxx.supabase.co
-DB_USER     = os.getenv("DB_USER")       # ej: postgres
+# --- Azure SQL Server ---
+DB_HOST     = os.getenv("DB_HOST")       # ej: tu-servidor.database.windows.net
+DB_USER     = os.getenv("DB_USER")
 DB_PASS     = os.getenv("DB_PASS")
-DB_PORT     = os.getenv("DB_PORT", "5432")
-DB_NAME     = os.getenv("DB_NAME", "postgres")
+DB_PORT     = os.getenv("DB_PORT", "1433")
+DB_NAME     = os.getenv("DB_NAME")
+DB_DRIVER   = os.getenv("DB_DRIVER", "ODBC Driver 18 for SQL Server")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
 
-if not all([DB_HOST, DB_USER, DB_PASS, API_KEY_SECRETA]):
+if not all([DB_HOST, DB_USER, DB_PASS, DB_NAME, API_KEY_SECRETA]):
      raise ValueError("Faltan variables de entorno criticas")
 
 async def verificar_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
@@ -60,16 +61,18 @@ def conectar_bd():
             _engine_cache = None
 
     try:
-        # PostgreSQL connection string para Supabase
+        # Cadena de conexión para Azure SQL Server vía ODBC (pyodbc).
+        # OJO: el driver va con espacios reemplazados por '+' en la URL.
+        driver_odbc = DB_DRIVER.replace(" ", "+")
         connection_string = (
-            f"postgresql+psycopg2://{DB_USER}:{DB_PASS}"
+            f"mssql+pyodbc://{DB_USER}:{DB_PASS}"
             f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+            f"?driver={driver_odbc}&Encrypt=yes&TrustServerCertificate=no"
         )
         engine = create_engine(
             connection_string,
             pool_pre_ping=True,
             pool_recycle=1800,
-            connect_args={"sslmode": "require"},  # Supabase requiere SSL
         )
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -77,7 +80,7 @@ def conectar_bd():
         _ultima_conexion   = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
         _ultimo_error      = None
-        print("Conexion BD OK (Supabase)")
+        print("Conexion BD OK (Azure SQL Server)")
         return engine
     except Exception as e:
         _ultimo_error        = str(e)
@@ -86,7 +89,7 @@ def conectar_bd():
         return None
 
 _cache     = {}
-_CACHE_TTL = 2592000  # 30 días en segundos
+_CACHE_TTL = 2592000  # 30 días en segundos (se deja igual: evita golpear Azure y gastar tokens/DTUs)
 
 def get_cached(centro_id: str):
     if centro_id in _cache:
@@ -156,53 +159,25 @@ def limpiar_centro_id(centro_id: str) -> str:
     return centro_id.strip().replace("\xa0", "").strip()
 
 # ============================================================================
-# CONSULTAS  —  PostgreSQL / Supabase
-# Cambios respecto a Azure:
-#   • Sin corchetes []: se usan comillas dobles "" para nombres con espacios
-#   • CHAR(160) → CHR(160)
-#   • RTRIM/LTRIM → TRIM
-#   • Sin esquema [dbo]: se usa el schema "public" por defecto
-#   • Nombre tabla: Caracterizacion_Estudiantil → caracterizacion_estudiantes
-#   • Nombre tabla: Indicadores_Proyecciones   → indicadores_proyecciones
-#   • Nombre tabla: Poblacion Estudiantil      → "Poblacion Estudiantil"
-#   • Nombre tabla: Proyecciones_cu            → proyecciones_cu
-#   • CAST(x AS VARCHAR) → CAST(x AS TEXT)
+# CONSULTAS  —  SQL Server / Azure (esquema real confirmado)
+#   • Caracterizacion_Estudiantes  (antes: caracterizacion_estudiantes)
+#   • Poblacion_Estudiantil2        (antes: poblacion_estudiantil / "Poblacion Estudiantil")
+#   • Proyeccion_Estudiantes        (antes: proyecciones_cu)
+#   • Oferta_Activa: existe pero NO tiene columna [Centro Universitario],
+#     así que la oferta por centro se sigue calculando desde
+#     Proyeccion_Estudiantes (igual que antes) hasta definir el cruce correcto.
+#   • Indicadores_Proyecciones (EBITDA / deserción %): tabla PENDIENTE —
+#     no vino en el esquema nuevo. query_indicators y query_desercion
+#     quedan devolviendo listas vacías (sin tumbar el resto del endpoint)
+#     hasta tener el nombre/columnas reales en Azure.
 # ============================================================================
 
 def query_indicators(engine, centro_id):
-    try:
-        nombre_bd = resolver_centro_id(centro_id)
-        with engine.connect() as conn:
-            result = conn.execute(text("""
-                SELECT
-                    TRIM("Nombre Corto")          AS "Nombre Corto",
-                    "Linea Base"                  AS "2024",
-                    "2025", "2026", "2027", "2028", "2029",
-                    TRIM(CAST("2030" AS TEXT))     AS "2030"
-                FROM indicadores_proyecciones
-                WHERE REPLACE(TRIM("Nivel"), CHR(160), '') = :nivel
-                  AND "Nombre Corto" IS NOT NULL
-                  AND TRIM("Nombre Corto") <> ''
-            """), {"nivel": nombre_bd})
-            rows = result.mappings().all()
-        filas_procesadas = []
-        for row in rows:
-            fila = normalizar_fila_indicadores(dict(row))
-            filas_procesadas.append({
-                "Nombre Corto": fila.get("Nombre Corto"),
-                "2024": fila.get("2024"),
-                "2025": fila.get("2025"),
-                "2026": fila.get("2026"),
-                "2027": fila.get("2027"),
-                "2028": fila.get("2028"),
-                "2029": fila.get("2029"),
-                "2030": fila.get("2030"),
-            })
-        print(f"query_indicators: {len(filas_procesadas)} filas")
-        return filas_procesadas
-    except Exception as e:
-        print(f"ERROR query_indicators: {e}")
-        return []
+    # PENDIENTE: falta el nombre/columnas de la tabla de indicadores
+    # financieros (EBITDA, Ingresos, Costos) en Azure. Se deja vacío para
+    # no romper el resto de la ficha mientras se confirma.
+    print("query_indicators: tabla pendiente de confirmar en Azure, devolviendo []")
+    return []
 
 def query_student_summary(engine, centro_id):
     try:
@@ -211,35 +186,35 @@ def query_student_summary(engine, centro_id):
 
         query_poblacion = text("""
             SELECT
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS pregrado_distancia,
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS pregrado_presencial,
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Pregrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS pregrado_total,
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS posgrado_distancia,
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'  AND TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS posgrado_presencial,
-                SUM(CASE WHEN REPLACE(TRIM("Nivel Académico"), CHR(160), '') = 'Posgrado'                                        THEN "Estudiantes Totales" ELSE 0 END) AS posgrado_total,
-                SUM(CASE WHEN TRIM("Modalidad") = 'Distancia'  THEN "Estudiantes Totales" ELSE 0 END) AS total_general_distancia,
-                SUM(CASE WHEN TRIM("Modalidad") = 'Presencial' THEN "Estudiantes Totales" ELSE 0 END) AS total_general_presencial,
-                SUM("Estudiantes Totales") AS total_general
-            FROM poblacion_estudiantil
-            WHERE "Centro Universitario" = :centro_id
-              AND "Año" = 2026
-              AND REPLACE(TRIM("Nivel Académico"), CHR(160), '') IN ('Pregrado', 'Posgrado')
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad])) = 'Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregrado_distancia,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad])) = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS pregrado_presencial,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'                                                THEN [Estudiantes Totales] ELSE 0 END) AS pregrado_total,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Posgrado'  AND RTRIM(LTRIM([Modalidad])) = 'Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS posgrado_distancia,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Posgrado'  AND RTRIM(LTRIM([Modalidad])) = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS posgrado_presencial,
+                SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Posgrado'                                                THEN [Estudiantes Totales] ELSE 0 END) AS posgrado_total,
+                SUM(CASE WHEN RTRIM(LTRIM([Modalidad])) = 'Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS total_general_distancia,
+                SUM(CASE WHEN RTRIM(LTRIM([Modalidad])) = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS total_general_presencial,
+                SUM([Estudiantes Totales]) AS total_general
+            FROM dbo.[Poblacion Estudiantil]
+            WHERE [Centro Universitario] = :centro_id
+              AND [Año] = 2026
+              AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
               AND (
-                  ("Periodicidad" = 'Semestral'     AND "Periodo" = 'S1')
-               OR ("Periodicidad" = 'Cuatrimestral' AND "Periodo" = 'Q1')
+                  ([Periodicidad] = 'Semestral'     AND [Periodo] = 'S1')
+               OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q1')
               )
         """)
 
         query_generos = text("""
             SELECT
-                SUM(CASE WHEN "Género" = 'Masculino' THEN "Estudiantes Totales" ELSE 0 END) AS hombres,
-                SUM(CASE WHEN "Género" = 'Femenino'  THEN "Estudiantes Totales" ELSE 0 END) AS mujeres
-            FROM caracterizacion_estudiantes
-            WHERE "Centro Universitario" = :centro_id
-              AND "Año" = 2026
+                SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
+                SUM(CASE WHEN [Género] = 'Femenino'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
+            FROM dbo.Caracterizacion_Estudiantil
+            WHERE [Centro Universitario] = :centro_id
+              AND [Año] = 2026
               AND (
-                  ("Periodicidad" = 'Semestral'     AND "Periodo" = 'S1')
-               OR ("Periodicidad" = 'Cuatrimestral' AND "Periodo" = 'Q1')
+                  ([Periodicidad] = 'Semestral'     AND [Periodo] = 'S1')
+               OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q1')
               )
         """)
 
@@ -264,25 +239,25 @@ def query_proyecciones(engine, centro_id):
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
-                "Nivel Académico",
-                "Nivel de Formación",
-                "Modalidad",
-                "Periodicidad",
-                "Tipo de Estudiante",
-                "Tipo de Información",
-                "Año",
-                SUM("Valor") AS "Valor"
-            FROM proyecciones_cu
-            WHERE "Centro Universitario" = :centro_id
-              AND "Atributo" LIKE '%Q1/S1%'
+                [Nivel Académico],
+                [Nivel de Formación],
+                [Modalidad],
+                [Periodicidad],
+                [Tipo de Estudiante],
+                [Tipo de Información],
+                [Año],
+                SUM([Valor]) AS [Valor]
+            FROM dbo.Proyecciones_cu
+            WHERE [Centro Universitario] = :centro_id
+              AND [Atributo] LIKE '%Q1/S1%'
             GROUP BY
-                "Nivel Académico",
-                "Nivel de Formación",
-                "Modalidad",
-                "Periodicidad",
-                "Tipo de Estudiante",
-                "Tipo de Información",
-                "Año"
+                [Nivel Académico],
+                [Nivel de Formación],
+                [Modalidad],
+                [Periodicidad],
+                [Tipo de Estudiante],
+                [Tipo de Información],
+                [Año]
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
@@ -299,19 +274,19 @@ def query_matriculados_2026(engine, centro_id):
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
-                REPLACE(TRIM("Nivel Académico"), CHR(160), '') AS nivel_academico,
-                TRIM("Modalidad")                              AS modalidad,
-                SUM("Estudiantes Nuevos")                      AS nuevos_matriculados,
-                SUM("Estudiantes Continuos")                   AS continuos_matriculados,
-                SUM("Estudiantes Totales")                     AS totales_matriculados
-            FROM "poblacion_estudiantil"
-            WHERE "Centro Universitario" = :centro_id
-              AND "Año" = 2026
-              AND "Periodicidad" IN ('Semestral', 'Cuatrimestral')
-              AND REPLACE(TRIM("Nivel Académico"), CHR(160), '') IN ('Pregrado', 'Posgrado')
+                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
+                RTRIM(LTRIM([Modalidad]))                               AS modalidad,
+                SUM([Estudiantes Nuevos])                               AS nuevos_matriculados,
+                SUM([Estudiantes Continuos])                            AS continuos_matriculados,
+                SUM([Estudiantes Totales])                              AS totales_matriculados
+            FROM dbo.[Poblacion Estudiantil]
+            WHERE [Centro Universitario] = :centro_id
+              AND [Año] = 2026
+              AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
+              AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
             GROUP BY
-                REPLACE(TRIM("Nivel Académico"), CHR(160), ''),
-                TRIM("Modalidad")
+                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
+                RTRIM(LTRIM([Modalidad]))
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
@@ -338,10 +313,10 @@ def query_desercion(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
-            SELECT "Nombre Corto", "2026", "2027", "2028", "2029", "2030"
-            FROM indicadores_proyecciones
-            WHERE REPLACE(TRIM("Nivel"), CHR(160), '') = :centro_id
-              AND "Nombre Corto" IN ('Deserción Presencial', 'Deserción Distancia')
+            SELECT [Nombre Corto], [2026], [2027], [2028], [2029], [2030]
+            FROM dbo.Indicadores_Proyecciones
+            WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :centro_id
+              AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
@@ -366,20 +341,20 @@ def query_oferta(engine, centro_id):
         nombre_bd = resolver_centro_id(centro_id)
         query = text("""
             SELECT
-                CAST("Año" AS TEXT)                                          AS año,
-                REPLACE(TRIM("Nivel Académico"), CHR(160), '')               AS nivel_academico,
-                REPLACE(TRIM("Modalidad"),       CHR(160), '')               AS modalidad,
-                REPLACE(TRIM("Periodicidad"),    CHR(160), '')               AS periodicidad,
-                COUNT(DISTINCT "SNIES")                                      AS snies_unico
-            FROM proyecciones_cu
-            WHERE "Centro Universitario" = :centro_id
-              AND "SNIES" IS NOT NULL
-              AND "Año" BETWEEN 2026 AND 2030
+                CAST([Año] AS VARCHAR)                                            AS año,
+                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '')           AS nivel_academico,
+                REPLACE(RTRIM(LTRIM([Modalidad])),       CHAR(160), '')           AS modalidad,
+                REPLACE(RTRIM(LTRIM([Periodicidad])),    CHAR(160), '')           AS periodicidad,
+                COUNT(DISTINCT [SNIES])                                            AS snies_unico
+            FROM dbo.Proyecciones_cu
+            WHERE [Centro Universitario] = :centro_id
+              AND [SNIES] IS NOT NULL
+              AND [Año] BETWEEN 2026 AND 2030
             GROUP BY
-                "Año",
-                REPLACE(TRIM("Nivel Académico"), CHR(160), ''),
-                REPLACE(TRIM("Modalidad"),       CHR(160), ''),
-                REPLACE(TRIM("Periodicidad"),    CHR(160), '')
+                [Año],
+                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
+                REPLACE(RTRIM(LTRIM([Modalidad])),       CHAR(160), ''),
+                REPLACE(RTRIM(LTRIM([Periodicidad])),    CHAR(160), '')
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
@@ -419,7 +394,7 @@ async def refresh_cache(api_key: str = Depends(verificar_api_key)):
     print(f"🗑️ Caché limpiado manualmente. Centros eliminados: {centros_en_cache}")
     return {
         "status": "ok",
-        "mensaje": "Caché limpiado. La próxima consulta de cada centro recargará datos frescos desde Supabase.",
+        "mensaje": "Caché limpiado. La próxima consulta de cada centro recargará datos frescos desde Azure.",
         "centros_eliminados": centros_en_cache
     }
 
