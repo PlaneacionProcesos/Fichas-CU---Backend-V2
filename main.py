@@ -15,7 +15,6 @@ DB_USER     = os.getenv("DB_USER")
 DB_PASS     = os.getenv("DB_PASS")
 DB_PORT     = os.getenv("DB_PORT", "1433")
 DB_NAME     = os.getenv("DB_NAME")
-DB_DRIVER   = os.getenv("DB_DRIVER", "ODBC Driver 18 for SQL Server")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
 
 if not all([DB_HOST, DB_USER, DB_PASS, DB_NAME, API_KEY_SECRETA]):
@@ -61,13 +60,14 @@ def conectar_bd():
             _engine_cache = None
 
     try:
-        # Cadena de conexión para Azure SQL Server vía ODBC (pyodbc).
-        # OJO: el driver va con espacios reemplazados por '+' en la URL.
-        driver_odbc = DB_DRIVER.replace(" ", "+")
+        # Cadena de conexión para Azure SQL Server vía pymssql (FreeTDS
+        # empaquetado dentro del wheel de Python) — NO requiere ningún
+        # driver instalado a nivel de sistema operativo, así que funciona
+        # en el runtime nativo de Python de Render (igual que psycopg2-binary
+        # con Supabase, sin necesidad de Docker).
         connection_string = (
-            f"mssql+pyodbc://{DB_USER}:{DB_PASS}"
+            f"mssql+pymssql://{DB_USER}:{DB_PASS}"
             f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-            f"?driver={driver_odbc}&Encrypt=yes&TrustServerCertificate=no"
         )
         engine = create_engine(
             connection_string,
