@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Azure SQL Server ---
-DB_HOST     = os.getenv("DB_HOST")       # ej: tu-servidor.database.windows.net
+DB_HOST     = os.getenv("DB_HOST")
 DB_USER     = os.getenv("DB_USER")
 DB_PASS     = os.getenv("DB_PASS")
 DB_PORT     = os.getenv("DB_PORT", "1433")
@@ -30,7 +30,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 ORIGENES_PERMITIDOS = [
     "http://localhost:5173",
     "http://localhost:4173",
-     "https://ficha-cu-two.vercel.app",
+    "https://ficha-cu-two.vercel.app",
 ]
 
 app.add_middleware(
@@ -84,7 +84,7 @@ def conectar_bd():
         return None
 
 _cache     = {}
-_CACHE_TTL = 2592000  # 30 días en segundos
+_CACHE_TTL = 2592000  # 30 días
 
 def get_cached(centro_id: str):
     if centro_id in _cache:
@@ -103,14 +103,6 @@ async def run_query(func, engine, centro_id):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_executor, func, engine, centro_id)
 
-def normalizar_fila_indicadores(row):
-    fila = {}
-    for key, value in row.items():
-        if key is None:
-            continue
-        fila[str(key).strip()] = value
-    return fila
-
 def normalizar_fila_proyecciones(row: dict) -> dict:
     MAPA = {
         "Rectoría":             "rectoria",
@@ -122,8 +114,8 @@ def normalizar_fila_proyecciones(row: dict) -> dict:
         "Periodicidad":         "periodicidad",
         "Modalidad":            "modalidad",
         "CECO":                 "ceco",
-        "Snies":                "snies",
-        "Programa":             "programa",
+        "SNIES":                "snies",
+        "Programa Académico":   "programa",
         "Atributo":             "atributo",
         "Valor":                "valor",
         "Tipo de Estudiante":   "tipo_estudiante",
@@ -150,16 +142,13 @@ def resolver_centro_id(centro_id: str) -> str:
     limpio = centro_id.strip().replace("\xa0", "").strip()
     return CENTRO_ID_MAPA.get(limpio, limpio)
 
-def limpiar_centro_id(centro_id: str) -> str:
-    return centro_id.strip().replace("\xa0", "").strip()
-
 # ============================================================================
-# CONSULTAS ACTUALIZADAS CON LOS NUEVOS NOMBRES DE TABLAS
+# CONSULTAS ACTUALIZADAS
 # ============================================================================
 
 def query_indicators(engine, centro_id):
-    # PENDIENTE: falta el nombre/columnas de la tabla de indicadores
-    print("query_indicators: tabla pendiente de confirmar en Azure, devolviendo []")
+    # Tabla Indicadores_Proyecciones NO EXISTE en la BD
+    print("query_indicators: tabla no existe, devolviendo []")
     return []
 
 def query_student_summary(engine, centro_id):
@@ -167,7 +156,6 @@ def query_student_summary(engine, centro_id):
         nombre_bd = resolver_centro_id(centro_id)
         print(f"query_student_summary: '{nombre_bd}'")
 
-        # TABLA ACTUALIZADA: Poblacion_Estudiantil2
         query_poblacion = text("""
             SELECT
                 SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad])) = 'Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregrado_distancia,
@@ -189,7 +177,6 @@ def query_student_summary(engine, centro_id):
               )
         """)
 
-        # TABLA ACTUALIZADA: Caracterizacion_Estudiantes
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
@@ -222,7 +209,6 @@ def query_student_summary(engine, centro_id):
 def query_proyecciones(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-        # TABLA ACTUALIZADA: Proyeccion_Estudiantes
         query = text("""
             SELECT
                 [Nivel Académico],
@@ -257,14 +243,13 @@ def query_proyecciones(engine, centro_id):
 def query_matriculados_2026(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-        # TABLA ACTUALIZADA: Poblacion_Estudiantil2
         query = text("""
             SELECT
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
-                RTRIM(LTRIM([Modalidad]))                               AS modalidad,
-                SUM([Estudiantes Nuevos])                               AS nuevos_matriculados,
-                SUM([Estudiantes Antiguos])                             AS continuos_matriculados,
-                SUM([Estudiantes Totales])                              AS totales_matriculados
+                RTRIM(LTRIM([Modalidad])) AS modalidad,
+                SUM([Estudiantes Nuevos]) AS nuevos_matriculados,
+                SUM([Estudiantes Continuos]) AS continuos_matriculados,
+                SUM([Estudiantes Totales]) AS totales_matriculados
             FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = 2026
@@ -295,43 +280,20 @@ def query_matriculados_2026(engine, centro_id):
         return []
 
 def query_desercion(engine, centro_id):
-    try:
-        nombre_bd = resolver_centro_id(centro_id)
-        # PENDIENTE: tabla Indicadores_Proyecciones no confirmada
-        query = text("""
-            SELECT [Nombre Corto], [2026], [2027], [2028], [2029], [2030]
-            FROM dbo.Indicadores_Proyecciones
-            WHERE REPLACE(RTRIM(LTRIM([Nivel])), CHAR(160), '') = :centro_id
-              AND [Nombre Corto] IN ('Deserción Presencial', 'Deserción Distancia')
-        """)
-        with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
-        desercion = []
-        for row in rows:
-            fila = normalizar_fila_indicadores(dict(row))
-            nombre = fila.get("Nombre Corto", "")
-            modalidad = "Presencial" if "Presencial" in nombre else "Distancia"
-            for anio in ["2026", "2027", "2028", "2029", "2030"]:
-                valor = fila.get(anio)
-                if valor is not None and valor != "":
-                    desercion.append({"año": anio, "modalidad": modalidad, "porcentaje": valor})
-        print(f"query_desercion: {len(desercion)} filas")
-        return desercion
-    except Exception as e:
-        print(f"ERROR query_desercion: {e}")
-        return []
+    # La tabla Indicadores_Proyecciones NO EXISTE
+    print("query_desercion: tabla no existe, devolviendo []")
+    return []
 
 def query_oferta(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-        # TABLA ACTUALIZADA: Proyeccion_Estudiantes
         query = text("""
             SELECT
-                CAST([Año] AS VARCHAR)                                            AS año,
-                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '')           AS nivel_academico,
-                REPLACE(RTRIM(LTRIM([Modalidad])),       CHAR(160), '')           AS modalidad,
-                REPLACE(RTRIM(LTRIM([Periodicidad])),    CHAR(160), '')           AS periodicidad,
-                COUNT(DISTINCT [SNIES])                                            AS snies_unico
+                CAST([Año] AS VARCHAR) AS año,
+                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
+                REPLACE(RTRIM(LTRIM([Modalidad])), CHAR(160), '') AS modalidad,
+                REPLACE(RTRIM(LTRIM([Periodicidad])), CHAR(160), '') AS periodicidad,
+                COUNT(DISTINCT [SNIES]) AS snies_unico
             FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [SNIES] IS NOT NULL
@@ -339,8 +301,8 @@ def query_oferta(engine, centro_id):
             GROUP BY
                 [Año],
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
-                REPLACE(RTRIM(LTRIM([Modalidad])),       CHAR(160), ''),
-                REPLACE(RTRIM(LTRIM([Periodicidad])),    CHAR(160), '')
+                REPLACE(RTRIM(LTRIM([Modalidad])), CHAR(160), ''),
+                REPLACE(RTRIM(LTRIM([Periodicidad])), CHAR(160), '')
         """)
         with engine.connect() as conn:
             rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
