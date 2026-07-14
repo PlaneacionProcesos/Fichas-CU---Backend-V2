@@ -60,11 +60,6 @@ def conectar_bd():
             _engine_cache = None
 
     try:
-        # Cadena de conexión para Azure SQL Server vía pymssql (FreeTDS
-        # empaquetado dentro del wheel de Python) — NO requiere ningún
-        # driver instalado a nivel de sistema operativo, así que funciona
-        # en el runtime nativo de Python de Render (igual que psycopg2-binary
-        # con Supabase, sin necesidad de Docker).
         connection_string = (
             f"mssql+pymssql://{DB_USER}:{DB_PASS}"
             f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -89,7 +84,7 @@ def conectar_bd():
         return None
 
 _cache     = {}
-_CACHE_TTL = 2592000  # 30 días en segundos (se deja igual: evita golpear Azure y gastar tokens/DTUs)
+_CACHE_TTL = 2592000  # 30 días en segundos
 
 def get_cached(centro_id: str):
     if centro_id in _cache:
@@ -159,23 +154,11 @@ def limpiar_centro_id(centro_id: str) -> str:
     return centro_id.strip().replace("\xa0", "").strip()
 
 # ============================================================================
-# CONSULTAS  —  SQL Server / Azure (esquema real confirmado)
-#   • Caracterizacion_Estudiantes  (antes: caracterizacion_estudiantes)
-#   • Poblacion_Estudiantil2        (antes: poblacion_estudiantil / "Poblacion Estudiantil")
-#   • Proyeccion_Estudiantes        (antes: proyecciones_cu)
-#   • Oferta_Activa: existe pero NO tiene columna [Centro Universitario],
-#     así que la oferta por centro se sigue calculando desde
-#     Proyeccion_Estudiantes (igual que antes) hasta definir el cruce correcto.
-#   • Indicadores_Proyecciones (EBITDA / deserción %): tabla PENDIENTE —
-#     no vino en el esquema nuevo. query_indicators y query_desercion
-#     quedan devolviendo listas vacías (sin tumbar el resto del endpoint)
-#     hasta tener el nombre/columnas reales en Azure.
+# CONSULTAS ACTUALIZADAS CON LOS NUEVOS NOMBRES DE TABLAS
 # ============================================================================
 
 def query_indicators(engine, centro_id):
     # PENDIENTE: falta el nombre/columnas de la tabla de indicadores
-    # financieros (EBITDA, Ingresos, Costos) en Azure. Se deja vacío para
-    # no romper el resto de la ficha mientras se confirma.
     print("query_indicators: tabla pendiente de confirmar en Azure, devolviendo []")
     return []
 
@@ -184,6 +167,7 @@ def query_student_summary(engine, centro_id):
         nombre_bd = resolver_centro_id(centro_id)
         print(f"query_student_summary: '{nombre_bd}'")
 
+        # TABLA ACTUALIZADA: Poblacion_Estudiantil2
         query_poblacion = text("""
             SELECT
                 SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad])) = 'Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregrado_distancia,
@@ -195,7 +179,7 @@ def query_student_summary(engine, centro_id):
                 SUM(CASE WHEN RTRIM(LTRIM([Modalidad])) = 'Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS total_general_distancia,
                 SUM(CASE WHEN RTRIM(LTRIM([Modalidad])) = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS total_general_presencial,
                 SUM([Estudiantes Totales]) AS total_general
-            FROM dbo.[Poblacion Estudiantil]
+            FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = 2026
               AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
@@ -205,11 +189,12 @@ def query_student_summary(engine, centro_id):
               )
         """)
 
+        # TABLA ACTUALIZADA: Caracterizacion_Estudiantes
         query_generos = text("""
             SELECT
                 SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
                 SUM(CASE WHEN [Género] = 'Femenino'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
-            FROM dbo.Caracterizacion_Estudiantil
+            FROM dbo.[Caracterizacion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = 2026
               AND (
@@ -237,6 +222,7 @@ def query_student_summary(engine, centro_id):
 def query_proyecciones(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        # TABLA ACTUALIZADA: Proyeccion_Estudiantes
         query = text("""
             SELECT
                 [Nivel Académico],
@@ -247,7 +233,7 @@ def query_proyecciones(engine, centro_id):
                 [Tipo de Información],
                 [Año],
                 SUM([Valor]) AS [Valor]
-            FROM dbo.Proyecciones_cu
+            FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [Atributo] LIKE '%Q1/S1%'
             GROUP BY
@@ -268,18 +254,18 @@ def query_proyecciones(engine, centro_id):
         print(f"ERROR query_proyecciones: {e}")
         return []
 
-
 def query_matriculados_2026(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        # TABLA ACTUALIZADA: Poblacion_Estudiantil2
         query = text("""
             SELECT
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
                 RTRIM(LTRIM([Modalidad]))                               AS modalidad,
                 SUM([Estudiantes Nuevos])                               AS nuevos_matriculados,
-                SUM([Estudiantes Continuos])                            AS continuos_matriculados,
+                SUM([Estudiantes Antiguos])                             AS continuos_matriculados,
                 SUM([Estudiantes Totales])                              AS totales_matriculados
-            FROM dbo.[Poblacion Estudiantil]
+            FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = 2026
               AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
@@ -308,10 +294,10 @@ def query_matriculados_2026(engine, centro_id):
         print(f"ERROR query_matriculados_2026: {e}")
         return []
 
-
 def query_desercion(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        # PENDIENTE: tabla Indicadores_Proyecciones no confirmada
         query = text("""
             SELECT [Nombre Corto], [2026], [2027], [2028], [2029], [2030]
             FROM dbo.Indicadores_Proyecciones
@@ -335,10 +321,10 @@ def query_desercion(engine, centro_id):
         print(f"ERROR query_desercion: {e}")
         return []
 
-
 def query_oferta(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        # TABLA ACTUALIZADA: Proyeccion_Estudiantes
         query = text("""
             SELECT
                 CAST([Año] AS VARCHAR)                                            AS año,
@@ -346,7 +332,7 @@ def query_oferta(engine, centro_id):
                 REPLACE(RTRIM(LTRIM([Modalidad])),       CHAR(160), '')           AS modalidad,
                 REPLACE(RTRIM(LTRIM([Periodicidad])),    CHAR(160), '')           AS periodicidad,
                 COUNT(DISTINCT [SNIES])                                            AS snies_unico
-            FROM dbo.Proyecciones_cu
+            FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [SNIES] IS NOT NULL
               AND [Año] BETWEEN 2026 AND 2030
