@@ -53,31 +53,58 @@ X-API-Key	El valor definido en API_KEY_SECRET
 - **`GET /health`**: Estado detallado de la conexión a la base de datos y últimos errores registrados.
 
 ### ⚙️ Configuración del Observatorio (Protegidos con `X-API-Key`)
-- **`GET /api/configuracion`**: Consulta la configuración activa en Azure SQL (`dbo.Configuracion_Observatorio`) y el código de atributo resultante para proyecciones.
+- **`GET /api/configuracion`**: Consulta la configuración activa en Azure SQL (`dbo.Configuracion_Observatorio`), el caso de período actual y el atributo proyectado calculado.
   - **Respuesta de ejemplo:**
     ```json
     {
       "status": "ok",
       "configuracion": {
         "anio": 2026,
-        "periodo": "S1",
+        "periodo": "S1+Q1",
         "periodicidad": "Semestral"
       },
       "atributo_proyeccion": "Q1/S1-2026"
     }
     ```
-- **`PUT /api/configuracion`**: Actualiza el año, período y periodicidad en Azure SQL, valida combinaciones y limpia automáticamente la caché en memoria.
+- **`PUT /api/configuracion`**: Actualiza el año y período en Azure SQL, valida y limpia automáticamente la caché en memoria.
   - **Body (JSON):**
     ```json
     {
-      "anio": 2027,
-      "periodo": "S1",
+      "anio": 2026,
+      "periodo": "S1+Q1",
       "periodicidad": "Semestral"
     }
     ```
-  - **Combinaciones válidas:**
-    - Semestral: `S1` $\rightarrow$ `Q1/S1`, `S2` $\rightarrow$ `Q3/S2`
-    - Cuatrimestral: `Q1` $\rightarrow$ `Q1`, `Q2` $\rightarrow$ `Q2`, `Q3` $\rightarrow$ `Q3`
+
+#### 📌 Los 5 Casos Oficiales de Período Soportados:
+
+| Caso (`periodo`) | Periodicidad | Descripción Académica | Población / Matrícula | Proyecciones |
+| :--- | :--- | :--- | :--- | :--- |
+| **`S1+Q1`** | `Semestral` | Inicio de Año | `Semestral S1` + `Cuatrimestral Q1` | `Q1/S1` (2026-2030) |
+| **`S1+Q2`** | `Semestral` | Semestre 1 + Cuatrimestre 2 | `Semestral S1` + `Cuatrimestral Q2` | `Q1/S1` (2026-2030) |
+| **`Q2`** | `Cuatrimestral` | Mitad de Año (Solo Cuatrimestre 2) | `Cuatrimestral Q2` | `Q2` (2026-2030) |
+| **`S2+Q2`** | `Semestral` | Semestre 2 + Cuatrimestre 2 | `Semestral S2` + `Cuatrimestral Q2` | `Q3/S2` (2026-2030) |
+| **`S2+Q3`** | `Semestral` | Segundo Semestre Tradicional | `Semestral S2` + `Cuatrimestral Q3` | `Q3/S2` (2026-2030) |
+
+*(Nota: También se aceptan alias simples como `S1` $\rightarrow$ `S1+Q1`, `S2` $\rightarrow$ `S2+Q3`, `Q2` $\rightarrow$ `Q2`).*
+
+#### 💻 Ejemplos cURL para cambiar entre los 5 casos:
+```powershell
+# Caso 1: S1 + Q1
+curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: application/json" -H "X-API-Key: TU_API_KEY" -d "{\"anio\": 2026, \"periodo\": \"S1+Q1\", \"periodicidad\": \"Semestral\"}"
+
+# Caso 2: S1 + Q2
+curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: application/json" -H "X-API-Key: TU_API_KEY" -d "{\"anio\": 2026, \"periodo\": \"S1+Q2\", \"periodicidad\": \"Semestral\"}"
+
+# Caso 3: Q2
+curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: application/json" -H "X-API-Key: TU_API_KEY" -d "{\"anio\": 2026, \"periodo\": \"Q2\", \"periodicidad\": \"Cuatrimestral\"}"
+
+# Caso 4: S2 + Q2
+curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: application/json" -H "X-API-Key: TU_API_KEY" -d "{\"anio\": 2026, \"periodo\": \"S2+Q2\", \"periodicidad\": \"Semestral\"}"
+
+# Caso 5: S2 + Q3
+curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: application/json" -H "X-API-Key: TU_API_KEY" -d "{\"anio\": 2026, \"periodo\": \"S2+Q3\", \"periodicidad\": \"Semestral\"}"
+```
 
 ### ⚡ Gestión de Caché (Protegidos con `X-API-Key`)
 - **`GET /api/cache/refresh`**: Limpia manualmente todos los centros almacenados en la memoria caché para forzar la recarga desde Azure SQL en la siguiente petición.

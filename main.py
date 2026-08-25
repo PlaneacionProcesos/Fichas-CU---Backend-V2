@@ -175,32 +175,80 @@ def obtener_configuracion(engine):
         "periodicidad": str(row["periodicidad"]).strip(),
     }
 
+MAPA_5_CASOS = {
+    "S1+Q1": {
+        "prefijo_proyeccion": "Q1/S1",
+        "clausula_poblacion": "(([Periodicidad] = 'Semestral' AND [Periodo] = 'S1') OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q1'))",
+        "descripcion": "Semestral S1 + Cuatrimestral Q1 (Inicio de Año)",
+        "periodo_guardado": "S1+Q1",
+        "periodicidad_guardada": "Semestral",
+    },
+    "S1+Q2": {
+        "prefijo_proyeccion": "Q1/S1",
+        "clausula_poblacion": "(([Periodicidad] = 'Semestral' AND [Periodo] = 'S1') OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q2'))",
+        "descripcion": "Semestral S1 + Cuatrimestral Q2",
+        "periodo_guardado": "S1+Q2",
+        "periodicidad_guardada": "Semestral",
+    },
+    "Q2": {
+        "prefijo_proyeccion": "Q2",
+        "clausula_poblacion": "([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q2')",
+        "descripcion": "Cuatrimestral Q2 (Mitad de Año)",
+        "periodo_guardado": "Q2",
+        "periodicidad_guardada": "Cuatrimestral",
+    },
+    "S2+Q2": {
+        "prefijo_proyeccion": "Q3/S2",
+        "clausula_poblacion": "(([Periodicidad] = 'Semestral' AND [Periodo] = 'S2') OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q2'))",
+        "descripcion": "Semestral S2 + Cuatrimestral Q2",
+        "periodo_guardado": "S2+Q2",
+        "periodicidad_guardada": "Semestral",
+    },
+    "S2+Q3": {
+        "prefijo_proyeccion": "Q3/S2",
+        "clausula_poblacion": "(([Periodicidad] = 'Semestral' AND [Periodo] = 'S2') OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q3'))",
+        "descripcion": "Semestral S2 + Cuatrimestral Q3 (Segundo Semestre)",
+        "periodo_guardado": "S2+Q3",
+        "periodicidad_guardada": "Semestral",
+    },
+}
+
+def normalizar_clave_periodo(periodo: str, periodicidad: str = "") -> str:
+    p = str(periodo).strip().upper().replace("/", "+").replace(" ", "").replace("_", "+").replace("-", "+")
+    per = str(periodicidad).strip().capitalize()
+
+    if p in MAPA_5_CASOS:
+        return p
+
+    # Alias y equivalencias
+    if p == "S1":
+        return "S1+Q1"
+    if p == "S2":
+        return "S2+Q3"
+    if p == "Q1":
+        return "S1+Q1"
+    if p == "Q3":
+        return "S2+Q3"
+
+    return p
+
+def obtener_filtros_periodo(config: dict):
+    periodo = str(config.get("periodo", "")).strip()
+    periodicidad = str(config.get("periodicidad", "")).strip()
+
+    clave = normalizar_clave_periodo(periodo, periodicidad)
+
+    if clave in MAPA_5_CASOS:
+        return MAPA_5_CASOS[clave]
+
+    casos_validos = list(MAPA_5_CASOS.keys())
+    raise ValueError(
+        f"Combinación '{periodo}' no es válida. Los 5 casos soportados son: {casos_validos}"
+    )
+
 def obtener_prefijo_periodo(config: dict) -> str:
-    periodo = str(config["periodo"]).strip().upper()
-    periodicidad = str(config["periodicidad"]).strip().capitalize()
-
-    if periodicidad == "Semestral":
-        mapa = {
-            "S1": "Q1/S1",
-            "S2": "Q3/S2",
-        }
-    elif periodicidad == "Cuatrimestral":
-        mapa = {
-            "Q1": "Q1",
-            "Q2": "Q2",
-            "Q3": "Q3",
-        }
-    else:
-        raise ValueError(
-            f"Periodicidad no válida: '{config.get('periodicidad')}'. Debe ser 'Semestral' o 'Cuatrimestral'."
-        )
-
-    if periodo not in mapa:
-        raise ValueError(
-            f"Periodo '{config.get('periodo')}' no es válido para periodicidad '{periodicidad}'. Válidos: {list(mapa.keys())}"
-        )
-
-    return mapa[periodo]
+    filtros = obtener_filtros_periodo(config)
+    return filtros["prefijo_proyeccion"]
 
 def obtener_codigo_atributo(config: dict) -> str:
     prefijo = obtener_prefijo_periodo(config)
@@ -256,9 +304,11 @@ def query_indicators(engine, centro_id):
 def query_student_summary(engine, centro_id, config):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        filtros = obtener_filtros_periodo(config)
+        clausula_poblacion = filtros["clausula_poblacion"]
         print(f"query_student_summary: '{nombre_bd}' - {config}")
 
-        query_poblacion = text("""
+        query_poblacion = text(f"""
             SELECT
                 SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad])) = 'Distancia'  THEN [Estudiantes Totales] ELSE 0 END) AS pregrado_distancia,
                 SUM(CASE WHEN REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') = 'Pregrado'  AND RTRIM(LTRIM([Modalidad])) = 'Presencial' THEN [Estudiantes Totales] ELSE 0 END) AS pregrado_presencial,
@@ -273,26 +323,22 @@ def query_student_summary(engine, centro_id, config):
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = :anio
               AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
-              AND [Periodicidad] = :periodicidad
-              AND [Periodo] = :periodo
+              AND {clausula_poblacion}
         """)
 
-        query_generos = text("""
+        query_generos = text(f"""
             SELECT
                 SUM(CASE WHEN [Género] = 'Masculino' THEN [Estudiantes Totales] ELSE 0 END) AS hombres,
                 SUM(CASE WHEN [Género] = 'Femenino'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
             FROM dbo.[Caracterizacion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = :anio
-              AND [Periodicidad] = :periodicidad
-              AND [Periodo] = :periodo
+              AND {clausula_poblacion}
         """)
 
         params = {
             "centro_id": nombre_bd,
             "anio": config["anio"],
-            "periodicidad": config["periodicidad"],
-            "periodo": config["periodo"],
         }
 
         with engine.connect() as conn:
@@ -314,8 +360,10 @@ def query_student_summary(engine, centro_id, config):
 def query_proyecciones(engine, centro_id, config):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-        prefijo_periodo = obtener_prefijo_periodo(config) # Ej: "Q1/S1"
-        filtro_atributo = f"%{prefijo_periodo}%"           # Ej: "%Q1/S1%"
+        prefijo = obtener_prefijo_periodo(config)
+        filtro_atributo = f"%{prefijo}%"
+        anio_inicio = int(config.get("anio", 2026))
+        print(f"query_proyecciones: '{nombre_bd}' - filtro atributo: '{filtro_atributo}' (años {anio_inicio} a 2030)")
 
         query = text("""
             SELECT
@@ -330,7 +378,7 @@ def query_proyecciones(engine, centro_id, config):
             FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [Atributo] LIKE :atributo
-              AND [Año] BETWEEN 2026 AND 2030
+              AND [Año] BETWEEN :anio_inicio AND 2030
             GROUP BY
                 [Nivel Académico],
                 [Nivel de Formación],
@@ -341,7 +389,11 @@ def query_proyecciones(engine, centro_id, config):
                 [Año]
         """)
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_bd, "atributo": filtro_atributo}).mappings().all()
+            rows = conn.execute(query, {
+                "centro_id": nombre_bd,
+                "atributo": filtro_atributo,
+                "anio_inicio": anio_inicio,
+            }).mappings().all()
         normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
         print(f"query_proyecciones: {len(normalizadas)} filas")
         return normalizadas
@@ -352,9 +404,11 @@ def query_proyecciones(engine, centro_id, config):
 def query_matriculados(engine, centro_id, config):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        filtros = obtener_filtros_periodo(config)
+        clausula_poblacion = filtros["clausula_poblacion"]
         print(f"query_matriculados: '{nombre_bd}' - {config}")
 
-        query = text("""
+        query = text(f"""
             SELECT
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
                 RTRIM(LTRIM([Modalidad])) AS modalidad,
@@ -364,9 +418,8 @@ def query_matriculados(engine, centro_id, config):
             FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = :anio
-              AND [Periodicidad] = :periodicidad
-              AND [Periodo] = :periodo
               AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
+              AND {clausula_poblacion}
             GROUP BY
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
                 RTRIM(LTRIM([Modalidad]))
@@ -374,8 +427,6 @@ def query_matriculados(engine, centro_id, config):
         params = {
             "centro_id": nombre_bd,
             "anio": config["anio"],
-            "periodicidad": config["periodicidad"],
-            "periodo": config["periodo"],
         }
         with engine.connect() as conn:
             rows = conn.execute(query, params).mappings().all()
@@ -606,13 +657,18 @@ async def actualizar_configuracion(
         )
 
     try:
+        # Validar y normalizar a uno de los 5 casos soportados
+        filtros = obtener_filtros_periodo({
+            "periodo": config.periodo,
+            "periodicidad": config.periodicidad
+        })
+
         nueva_config = {
             "anio": config.anio,
-            "periodo": config.periodo.strip().upper(),
-            "periodicidad": config.periodicidad.strip().capitalize(),
+            "periodo": filtros["periodo_guardado"],
+            "periodicidad": filtros["periodicidad_guardada"],
         }
 
-        # Validar que la combinación sea válida
         atributo = obtener_codigo_atributo(nueva_config)
 
         query = text("""
@@ -645,6 +701,8 @@ async def actualizar_configuracion(
         return {
             "status": "ok",
             "mensaje": "Configuración actualizada correctamente",
+            "caso_periodo": filtros["periodo_guardado"],
+            "descripcion": filtros["descripcion"],
             "configuracion": nueva_config,
             "atributo_proyeccion": atributo,
             "cache_limpiado": True,
