@@ -47,25 +47,51 @@ Header	Valor
 X-API-Key	El valor definido en API_KEY_SECRET
 
 ## 🛣️ Endpoints
-Públicos / Monitoreo
-GET /: Verifica que la API esté en línea.
 
-GET /health: Estado detallado de la conexión a la base de datos y últimos errores registrados.
+### 🟢 Públicos / Monitoreo
+- **`GET /`**: Verifica que la API esté en línea.
+- **`GET /health`**: Estado detallado de la conexión a la base de datos y últimos errores registrados.
 
-### Datos del Observatorio
-GET /api/observatorio/completo/{centro_id}: Retorna un objeto masivo con toda la información necesaria para el tablero:
+### ⚙️ Configuración del Observatorio (Protegidos con `X-API-Key`)
+- **`GET /api/configuracion`**: Consulta la configuración activa en Azure SQL (`dbo.Configuracion_Observatorio`) y el código de atributo resultante para proyecciones.
+  - **Respuesta de ejemplo:**
+    ```json
+    {
+      "status": "ok",
+      "configuracion": {
+        "anio": 2026,
+        "periodo": "S1",
+        "periodicidad": "Semestral"
+      },
+      "atributo_proyeccion": "Q1/S1-2026"
+    }
+    ```
+- **`PUT /api/configuracion`**: Actualiza el año, período y periodicidad en Azure SQL, valida combinaciones y limpia automáticamente la caché en memoria.
+  - **Body (JSON):**
+    ```json
+    {
+      "anio": 2027,
+      "periodo": "S1",
+      "periodicidad": "Semestral"
+    }
+    ```
+  - **Combinaciones válidas:**
+    - Semestral: `S1` $\rightarrow$ `Q1/S1`, `S2` $\rightarrow$ `Q3/S2`
+    - Cuatrimestral: `Q1` $\rightarrow$ `Q1`, `Q2` $\rightarrow$ `Q2`, `Q3` $\rightarrow$ `Q3`
 
-indicators: Proyecciones anuales (2025-2030).
+### ⚡ Gestión de Caché (Protegidos con `X-API-Key`)
+- **`GET /api/cache/refresh`**: Limpia manualmente todos los centros almacenados en la memoria caché para forzar la recarga desde Azure SQL en la siguiente petición.
+- **`GET /api/cache/status`**: Muestra el estado del caché, cantidad de centros en memoria, fechas de carga y tiempo restante de expiración (TTL).
 
-studentSummary: Resumen de población por género y modalidad.
-
-proyecciones: Datos consolidados por nivel y año.
-
-matriculados2026: Comparativa de nuevos vs. antiguos.
-
-desercion: Tasas de deserción por modalidad.
-
-oferta: Conteo de programas únicos (SNIES).
+### 📊 Datos del Observatorio (Protegidos con `X-API-Key`)
+- **`GET /api/observatorio/completo/{centro_id}`**: Retorna un objeto consolidado con toda la información necesaria para el tablero según la configuración activa:
+  - **`indicators`**: Proyecciones anuales (2025-2030).
+  - **`studentSummary`**: Resumen de población por género y modalidad para el año y período configurados.
+  - **`proyecciones`**: Datos consolidados por nivel y año filtrados por el atributo activo (ej. `%Q1/S1-2026%`).
+  - **`matriculados`** / **`matriculados2026`**: Comparativa de nuevos vs. continuos según la configuración activa.
+  - **`desercion`**: Tasas de deserción por modalidad.
+  - **`oferta`**: Conteo de programas únicos (SNIES) proyectados en una ventana de 5 años a partir del año configurado.
+- **`GET /api/observatorio/page2/{centro_id}`**: Retorna los datos del observatorio para la página 2.
 
 ## 📊 Mapeo de Centros Universitarios
 La API traduce automáticamente los IDs del frontend a los nombres exactos en la base de datos. Algunos ejemplos soportados:

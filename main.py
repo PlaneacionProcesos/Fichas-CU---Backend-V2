@@ -6,6 +6,8 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
+from urllib.parse import quote_plus
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -33,11 +35,17 @@ ORIGENES_PERMITIDOS = [
     "https://ficha-cu-two.vercel.app",
 ]
 
+class ConfiguracionRequest(BaseModel):
+    anio: int
+    periodo: str
+    periodicidad: str
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ORIGENES_PERMITIDOS,
     allow_credentials=True,
-    allow_methods=["GET"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -61,7 +69,7 @@ def conectar_bd():
 
     try:
         connection_string = (
-            f"mssql+pymssql://{DB_USER}:{DB_PASS}"
+            f"mssql+pymssql://{quote_plus(DB_USER)}:{quote_plus(DB_PASS)}"
             f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
         )
         engine = create_engine(
@@ -99,9 +107,9 @@ def set_cached(centro_id: str, data: dict):
 
 _executor = ThreadPoolExecutor(max_workers=6)
 
-async def run_query(func, engine, centro_id):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, func, engine, centro_id)
+async def run_query(func, *args):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_executor, func, *args)
 
 def normalizar_fila_proyecciones(row: dict) -> dict:
     MAPA = {
@@ -142,19 +150,113 @@ def resolver_centro_id(centro_id: str) -> str:
     limpio = centro_id.strip().replace("\xa0", "").strip()
     return CENTRO_ID_MAPA.get(limpio, limpio)
 
+def obtener_configuracion(engine):
+    query = text("""
+        SELECT
+            anio,
+            periodo,
+            periodicidad
+        FROM dbo.Configuracion_Observatorio
+        WHERE id = 1
+    """)
+
+    with engine.connect() as conn:
+        row = conn.execute(query).mappings().first()
+
+    if not row:
+        raise HTTPException(
+            status_code=500,
+            detail="No existe configuración del observatorio en dbo.Configuracion_Observatorio (id=1)"
+        )
+
+    return {
+        "anio": int(row["anio"]),
+        "periodo": str(row["periodo"]).strip(),
+        "periodicidad": str(row["periodicidad"]).strip(),
+    }
+
+def obtener_prefijo_periodo(config: dict) -> str:
+    periodo = str(config["periodo"]).strip().upper()
+    periodicidad = str(config["periodicidad"]).strip().capitalize()
+
+    if periodicidad == "Semestral":
+        mapa = {
+            "S1": "Q1/S1",
+            "S2": "Q3/S2",
+        }
+    elif periodicidad == "Cuatrimestral":
+        mapa = {
+            "Q1": "Q1",
+            "Q2": "Q2",
+            "Q3": "Q3",
+        }
+    else:
+        raise ValueError(
+            f"Periodicidad no válida: '{config.get('periodicidad')}'. Debe ser 'Semestral' o 'Cuatrimestral'."
+        )
+
+    if periodo not in mapa:
+        raise ValueError(
+            f"Periodo '{config.get('periodo')}' no es válido para periodicidad '{periodicidad}'. Válidos: {list(mapa.keys())}"
+        )
+
+    return mapa[periodo]
+
+def obtener_codigo_atributo(config: dict) -> str:
+    prefijo = obtener_prefijo_periodo(config)
+    return f"{prefijo}-{config['anio']}"
+
+
+
 # ============================================================================
-# CONSULTAS ACTUALIZADAS
+# CONSULTAS A LA BASE DE DATOS
 # ============================================================================
 
 def query_indicators(engine, centro_id):
-    # Tabla Indicadores_Proyecciones NO EXISTE en la BD
-    print("query_indicators: tabla no existe, devolviendo []")
-    return []
-
-def query_student_summary(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
-        print(f"query_student_summary: '{nombre_bd}'")
+        query = text("""
+            SELECT
+                CONCAT(RTRIM(LTRIM([Tipo de Información])), ' ', RTRIM(LTRIM([Tipo de Estudiante]))) AS [Nombre Corto],
+                SUM(CASE WHEN [Año] = 2024 THEN [Valor] ELSE 0 END) AS [2024],
+                SUM(CASE WHEN [Año] = 2025 THEN [Valor] ELSE 0 END) AS [2025],
+                SUM(CASE WHEN [Año] = 2026 THEN [Valor] ELSE 0 END) AS [2026],
+                SUM(CASE WHEN [Año] = 2027 THEN [Valor] ELSE 0 END) AS [2027],
+                SUM(CASE WHEN [Año] = 2028 THEN [Valor] ELSE 0 END) AS [2028],
+                SUM(CASE WHEN [Año] = 2029 THEN [Valor] ELSE 0 END) AS [2029],
+                SUM(CASE WHEN [Año] = 2030 THEN [Valor] ELSE 0 END) AS [2030]
+            FROM dbo.[Proyeccion_Estudiantes]
+            WHERE [Centro Universitario] = :centro_id
+              AND [Año] BETWEEN 2024 AND 2030
+            GROUP BY [Tipo de Información], [Tipo de Estudiante]
+            ORDER BY [Tipo de Información], [Tipo de Estudiante]
+        """)
+        with engine.connect() as conn:
+            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
+
+        resultado = [
+            {
+                "Nombre Corto": str(r["Nombre Corto"]).strip(),
+                "2024": int(r["2024"] or 0),
+                "2025": int(r["2025"] or 0),
+                "2026": int(r["2026"] or 0),
+                "2027": int(r["2027"] or 0),
+                "2028": int(r["2028"] or 0),
+                "2029": int(r["2029"] or 0),
+                "2030": int(r["2030"] or 0),
+            }
+            for r in rows
+        ]
+        print(f"query_indicators: {len(resultado)} filas para '{nombre_bd}'")
+        return resultado
+    except Exception as e:
+        print(f"ERROR query_indicators: {e}")
+        return []
+
+def query_student_summary(engine, centro_id, config):
+    try:
+        nombre_bd = resolver_centro_id(centro_id)
+        print(f"query_student_summary: '{nombre_bd}' - {config}")
 
         query_poblacion = text("""
             SELECT
@@ -169,12 +271,10 @@ def query_student_summary(engine, centro_id):
                 SUM([Estudiantes Totales]) AS total_general
             FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
-              AND [Año] = 2026
+              AND [Año] = :anio
               AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
-              AND (
-                  ([Periodicidad] = 'Semestral'     AND [Periodo] = 'S1')
-               OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q1')
-              )
+              AND [Periodicidad] = :periodicidad
+              AND [Periodo] = :periodo
         """)
 
         query_generos = text("""
@@ -183,16 +283,21 @@ def query_student_summary(engine, centro_id):
                 SUM(CASE WHEN [Género] = 'Femenino'  THEN [Estudiantes Totales] ELSE 0 END) AS mujeres
             FROM dbo.[Caracterizacion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
-              AND [Año] = 2026
-              AND (
-                  ([Periodicidad] = 'Semestral'     AND [Periodo] = 'S1')
-               OR ([Periodicidad] = 'Cuatrimestral' AND [Periodo] = 'Q1')
-              )
+              AND [Año] = :anio
+              AND [Periodicidad] = :periodicidad
+              AND [Periodo] = :periodo
         """)
 
+        params = {
+            "centro_id": nombre_bd,
+            "anio": config["anio"],
+            "periodicidad": config["periodicidad"],
+            "periodo": config["periodo"],
+        }
+
         with engine.connect() as conn:
-            row_pob = conn.execute(query_poblacion, {"centro_id": nombre_bd}).mappings().first()
-            row_gen = conn.execute(query_generos,   {"centro_id": nombre_bd}).mappings().first()
+            row_pob = conn.execute(query_poblacion, params).mappings().first()
+            row_gen = conn.execute(query_generos,   params).mappings().first()
 
         print(f"row_pob: {dict(row_pob) if row_pob else 'NONE'}")
         print(f"row_gen: {dict(row_gen) if row_gen else 'NONE'}")
@@ -206,9 +311,12 @@ def query_student_summary(engine, centro_id):
         print(f"ERROR query_student_summary: {e}")
         return {}
 
-def query_proyecciones(engine, centro_id):
+def query_proyecciones(engine, centro_id, config):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        prefijo_periodo = obtener_prefijo_periodo(config) # Ej: "Q1/S1"
+        filtro_atributo = f"%{prefijo_periodo}%"           # Ej: "%Q1/S1%"
+
         query = text("""
             SELECT
                 [Nivel Académico],
@@ -221,7 +329,8 @@ def query_proyecciones(engine, centro_id):
                 SUM([Valor]) AS [Valor]
             FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
-              AND [Atributo] LIKE '%Q1/S1%'
+              AND [Atributo] LIKE :atributo
+              AND [Año] BETWEEN 2026 AND 2030
             GROUP BY
                 [Nivel Académico],
                 [Nivel de Formación],
@@ -232,7 +341,7 @@ def query_proyecciones(engine, centro_id):
                 [Año]
         """)
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
+            rows = conn.execute(query, {"centro_id": nombre_bd, "atributo": filtro_atributo}).mappings().all()
         normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
         print(f"query_proyecciones: {len(normalizadas)} filas")
         return normalizadas
@@ -240,9 +349,11 @@ def query_proyecciones(engine, centro_id):
         print(f"ERROR query_proyecciones: {e}")
         return []
 
-def query_matriculados_2026(engine, centro_id):
+def query_matriculados(engine, centro_id, config):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        print(f"query_matriculados: '{nombre_bd}' - {config}")
+
         query = text("""
             SELECT
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
@@ -252,15 +363,22 @@ def query_matriculados_2026(engine, centro_id):
                 SUM([Estudiantes Totales]) AS totales_matriculados
             FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
-              AND [Año] = 2026
-              AND [Periodicidad] IN ('Semestral', 'Cuatrimestral')
+              AND [Año] = :anio
+              AND [Periodicidad] = :periodicidad
+              AND [Periodo] = :periodo
               AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
             GROUP BY
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
                 RTRIM(LTRIM([Modalidad]))
         """)
+        params = {
+            "centro_id": nombre_bd,
+            "anio": config["anio"],
+            "periodicidad": config["periodicidad"],
+            "periodo": config["periodo"],
+        }
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
+            rows = conn.execute(query, params).mappings().all()
 
         resultado = [
             {
@@ -272,21 +390,50 @@ def query_matriculados_2026(engine, centro_id):
             }
             for r in rows
         ]
-        print(f"query_matriculados_2026: {len(resultado)} filas")
+        print(f"query_matriculados: {len(resultado)} filas")
         return resultado
 
     except Exception as e:
-        print(f"ERROR query_matriculados_2026: {e}")
+        print(f"ERROR query_matriculados: {e}")
         return []
 
 def query_desercion(engine, centro_id):
-    # La tabla Indicadores_Proyecciones NO EXISTE
-    print("query_desercion: tabla no existe, devolviendo []")
-    return []
-
-def query_oferta(engine, centro_id):
     try:
         nombre_bd = resolver_centro_id(centro_id)
+        query = text("""
+            SELECT
+                CAST([Año] AS VARCHAR) AS año,
+                RTRIM(LTRIM([Modalidad])) AS modalidad,
+                ROUND(AVG(CAST([Tasa Deserción (periodo)] AS FLOAT)) * 100, 2) AS porcentaje
+            FROM dbo.[Poblacion_Estudiantil2]
+            WHERE [Centro Universitario] = :centro_id
+              AND [Modalidad] IS NOT NULL
+              AND [Año] BETWEEN 2020 AND 2030
+            GROUP BY [Año], RTRIM(LTRIM([Modalidad]))
+            ORDER BY [Año], RTRIM(LTRIM([Modalidad]))
+        """)
+        with engine.connect() as conn:
+            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
+
+        resultado = [
+            {
+                "año": str(r["año"]).strip(),
+                "modalidad": str(r["modalidad"]).strip(),
+                "porcentaje": float(r["porcentaje"] or 0),
+            }
+            for r in rows
+        ]
+        print(f"query_desercion: {len(resultado)} filas para '{nombre_bd}'")
+        return resultado
+    except Exception as e:
+        print(f"ERROR query_desercion: {e}")
+        return []
+
+def query_oferta(engine, centro_id, config=None):
+    try:
+        nombre_bd = resolver_centro_id(centro_id)
+        print(f"query_oferta: '{nombre_bd}'")
+
         query = text("""
             SELECT
                 CAST([Año] AS VARCHAR) AS año,
@@ -297,7 +444,7 @@ def query_oferta(engine, centro_id):
             FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [SNIES] IS NOT NULL
-              AND [Año] BETWEEN 2026 AND 2030
+              AND [Año] BETWEEN 2024 AND 2030
             GROUP BY
                 [Año],
                 REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
@@ -339,7 +486,7 @@ async def health():
 async def refresh_cache(api_key: str = Depends(verificar_api_key)):
     centros_en_cache = list(_cache.keys())
     _cache.clear()
-    print(f"🗑️ Caché limpiado manualmente. Centros eliminados: {centros_en_cache}")
+    print(f"[CACHE] Cache limpiado manualmente. Centros eliminados: {centros_en_cache}")
     return {
         "status": "ok",
         "mensaje": "Caché limpiado. La próxima consulta de cada centro recargará datos frescos desde Azure.",
@@ -379,19 +526,23 @@ async def get_observatorio_completo(
 
     try:
         t0 = time.time()
+        # Obtener configuración centralizada de Azure SQL una sola vez
+        config = obtener_configuracion(engine)
+
         results = await asyncio.gather(
-            run_query(query_indicators,        engine, centro_id),
-            run_query(query_student_summary,   engine, centro_id),
-            run_query(query_proyecciones,      engine, centro_id),
-            run_query(query_matriculados_2026, engine, centro_id),
-            run_query(query_desercion,         engine, centro_id),
-            run_query(query_oferta,            engine, centro_id),
+            run_query(query_indicators,      engine, centro_id),
+            run_query(query_student_summary, engine, centro_id, config),
+            run_query(query_proyecciones,    engine, centro_id, config),
+            run_query(query_matriculados,    engine, centro_id, config),
+            run_query(query_desercion,       engine, centro_id),
+            run_query(query_oferta,          engine, centro_id, config),
         )
         response = {
             "indicators":       results[0],
             "studentSummary":   results[1],
             "proyecciones":     results[2],
-            "matriculados2026": results[3],
+            "matriculados":     results[3],
+            "matriculados2026": results[3],  # Compatibilidad con frontend
             "desercion":        results[4],
             "oferta":           results[5],
         }
@@ -399,6 +550,8 @@ async def get_observatorio_completo(
         set_cached(centro_id, response)
         return response
 
+    except HTTPException:
+        raise
     except Exception as e:
         print("ERROR:", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -410,6 +563,110 @@ async def get_page2_data(
 ):
     return await get_observatorio_completo(centro_id, api_key)
 
+@app.get("/api/configuracion")
+async def get_configuracion(
+    api_key: str = Depends(verificar_api_key),
+):
+    engine = conectar_bd()
+
+    if not engine:
+        raise HTTPException(
+            status_code=503,
+            detail="Base de datos no disponible"
+        )
+
+    try:
+        config = obtener_configuracion(engine)
+
+        return {
+            "status": "ok",
+            "configuracion": config,
+            "atributo_proyeccion": obtener_codigo_atributo(config)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+@app.put("/api/configuracion")
+async def actualizar_configuracion(
+    config: ConfiguracionRequest,
+    api_key: str = Depends(verificar_api_key),
+):
+    engine = conectar_bd()
+
+    if not engine:
+        raise HTTPException(
+            status_code=503,
+            detail="Base de datos no disponible"
+        )
+
+    try:
+        nueva_config = {
+            "anio": config.anio,
+            "periodo": config.periodo.strip().upper(),
+            "periodicidad": config.periodicidad.strip().capitalize(),
+        }
+
+        # Validar que la combinación sea válida
+        atributo = obtener_codigo_atributo(nueva_config)
+
+        query = text("""
+            UPDATE dbo.Configuracion_Observatorio
+            SET
+                anio = :anio,
+                periodo = :periodo,
+                periodicidad = :periodicidad,
+                fecha_actualizacion = GETDATE()
+            WHERE id = 1
+        """)
+
+        with engine.begin() as conn:
+            resultado = conn.execute(
+                query,
+                nueva_config
+            )
+
+        if resultado.rowcount == 0:
+            raise HTTPException(
+                status_code=500,
+                detail="No existe el registro de configuración con id=1 en dbo.Configuracion_Observatorio"
+            )
+
+        # Limpiar automáticamente la memoria caché para forzar datos frescos
+        centros_eliminados = list(_cache.keys())
+        _cache.clear()
+        print(f"[CACHE] Cache limpiado tras actualizar configuracion. Centros eliminados: {centros_eliminados}")
+
+        return {
+            "status": "ok",
+            "mensaje": "Configuración actualizada correctamente",
+            "configuracion": nueva_config,
+            "atributo_proyeccion": atributo,
+            "cache_limpiado": True,
+            "centros_eliminados": centros_eliminados,
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="localhost", port=8000, reload=True)
