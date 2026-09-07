@@ -1,8 +1,10 @@
 import os
 import time
 import asyncio
+import secrets
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
@@ -22,10 +24,20 @@ API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
 if not all([DB_HOST, DB_USER, DB_PASS, DB_NAME, API_KEY_SECRETA]):
     raise ValueError("Faltan variables de entorno criticas")
 
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-async def verificar_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
-    if x_api_key != API_KEY_SECRETA:
-        raise HTTPException(status_code=403, detail="Acceso no autorizado")
+
+async def verificar_api_key(x_api_key: str | None = Security(api_key_header)):
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Falta el encabezado de autenticación: X-API-Key",
+        )
+    if not secrets.compare_digest(x_api_key.strip(), API_KEY_SECRETA.strip()):
+        raise HTTPException(
+            status_code=403,
+            detail="Acceso no autorizado: API-Key inválida",
+        )
     return x_api_key
 
 
