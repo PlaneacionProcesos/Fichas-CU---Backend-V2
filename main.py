@@ -12,20 +12,22 @@ from pydantic import BaseModel
 load_dotenv()
 
 # --- Azure SQL Server ---
-DB_HOST     = os.getenv("DB_HOST")
-DB_USER     = os.getenv("DB_USER")
-DB_PASS     = os.getenv("DB_PASS")
-DB_PORT     = os.getenv("DB_PORT", "1433")
-DB_NAME     = os.getenv("DB_NAME")
+DB_HOST = os.getenv("DB_HOST")
+DB_USER = os.getenv("DB_USER")
+DB_PASS = os.getenv("DB_PASS")
+DB_PORT = os.getenv("DB_PORT", "1433")
+DB_NAME = os.getenv("DB_NAME")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
 
 if not all([DB_HOST, DB_USER, DB_PASS, DB_NAME, API_KEY_SECRETA]):
-     raise ValueError("Faltan variables de entorno criticas")
+    raise ValueError("Faltan variables de entorno criticas")
+
 
 async def verificar_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
     if x_api_key != API_KEY_SECRETA:
         raise HTTPException(status_code=403, detail="Acceso no autorizado")
     return x_api_key
+
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -34,6 +36,7 @@ ORIGENES_PERMITIDOS = [
     "http://localhost:4173",
     "https://ficha-cu-two.vercel.app",
 ]
+
 
 class ConfiguracionRequest(BaseModel):
     anio: int
@@ -49,11 +52,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_engine_cache        = None
-_ultima_conexion     = None
-_total_conexiones    = 0
+_engine_cache = None
+_ultima_conexion = None
+_total_conexiones = 0
 _conexiones_fallidas = 0
-_ultimo_error        = None
+_ultimo_error = None
+
 
 def conectar_bd():
     global _engine_cache, _ultima_conexion
@@ -79,20 +83,22 @@ def conectar_bd():
         )
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        _engine_cache      = engine
-        _ultima_conexion   = time.strftime("%Y-%m-%d %H:%M:%S")
+        _engine_cache = engine
+        _ultima_conexion = time.strftime("%Y-%m-%d %H:%M:%S")
         _total_conexiones += 1
-        _ultimo_error      = None
+        _ultimo_error = None
         print("Conexion BD OK (Azure SQL Server)")
         return engine
     except Exception as e:
-        _ultimo_error        = str(e)
+        _ultimo_error = str(e)
         _conexiones_fallidas += 1
         print(f"Error BD: {e}")
         return None
 
-_cache     = {}
+
+_cache = {}
 _CACHE_TTL = 2592000  # 30 días
+
 
 def get_cached(centro_id: str):
     if centro_id in _cache:
@@ -102,34 +108,38 @@ def get_cached(centro_id: str):
         del _cache[centro_id]
     return None
 
+
 def set_cached(centro_id: str, data: dict):
     _cache[centro_id] = (data, time.time())
 
+
 _executor = ThreadPoolExecutor(max_workers=6)
+
 
 async def run_query(func, *args):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_executor, func, *args)
 
+
 def normalizar_fila_proyecciones(row: dict) -> dict:
     MAPA = {
-        "Rectoría":             "rectoria",
+        "Rectoría": "rectoria",
         "Centro Universitario": "centro_universitario",
-        "Sede":                 "sede",
-        "Nivel Académico":      "nivel_academico",
-        "Nivel de Formación":   "nivel_formacion",
-        "Facultad":             "facultad",
-        "Periodicidad":         "periodicidad",
-        "Modalidad":            "modalidad",
-        "CECO":                 "ceco",
-        "SNIES":                "snies",
-        "Programa Académico":   "programa",
-        "Atributo":             "atributo",
-        "Valor":                "valor",
-        "Tipo de Estudiante":   "tipo_estudiante",
-        "Tipo de Información":  "tipo_informacion",
-        "Periodo":              "periodo",
-        "Año":                  "año",
+        "Sede": "sede",
+        "Nivel Académico": "nivel_academico",
+        "Nivel de Formación": "nivel_formacion",
+        "Facultad": "facultad",
+        "Periodicidad": "periodicidad",
+        "Modalidad": "modalidad",
+        "CECO": "ceco",
+        "SNIES": "snies",
+        "Programa Académico": "programa",
+        "Atributo": "atributo",
+        "Valor": "valor",
+        "Tipo de Estudiante": "tipo_estudiante",
+        "Tipo de Información": "tipo_informacion",
+        "Periodo": "periodo",
+        "Año": "año",
     }
     normalizado = {}
     for key, value in row.items():
@@ -138,17 +148,20 @@ def normalizar_fila_proyecciones(row: dict) -> dict:
         normalizado[nueva_clave] = value
     return normalizado
 
+
 CENTRO_ID_MAPA = {
-    "centro-engativa":               "Especial Minuto de Dios - Engativá",
-    "centro-kennedy":                "Kennedy",
-    "centro-santa-fe-las-cruces":    "Las Cruces - Santa Fe",
+    "centro-engativa": "Especial Minuto de Dios - Engativá",
+    "centro-kennedy": "Kennedy",
+    "centro-santa-fe-las-cruces": "Las Cruces - Santa Fe",
     "centro-perdomo-ciudad-bolivar": "Perdomo - Ciudad Bolívar",
-    "centro-san-cristobal-usaquen":  "San Cristóbal Norte - Usaquén",
+    "centro-san-cristobal-usaquen": "San Cristóbal Norte - Usaquén",
 }
+
 
 def resolver_centro_id(centro_id: str) -> str:
     limpio = centro_id.strip().replace("\xa0", "").strip()
     return CENTRO_ID_MAPA.get(limpio, limpio)
+
 
 def obtener_configuracion(engine):
     query = text("""
@@ -166,7 +179,7 @@ def obtener_configuracion(engine):
     if not row:
         raise HTTPException(
             status_code=500,
-            detail="No existe configuración del observatorio en dbo.Configuracion_Observatorio (id=1)"
+            detail="No existe configuración del observatorio en dbo.Configuracion_Observatorio (id=1)",
         )
 
     return {
@@ -174,6 +187,7 @@ def obtener_configuracion(engine):
         "periodo": str(row["periodo"]).strip(),
         "periodicidad": str(row["periodicidad"]).strip(),
     }
+
 
 MAPA_5_CASOS = {
     "S1+Q1": {
@@ -213,8 +227,17 @@ MAPA_5_CASOS = {
     },
 }
 
+
 def normalizar_clave_periodo(periodo: str, periodicidad: str = "") -> str:
-    p = str(periodo).strip().upper().replace("/", "+").replace(" ", "").replace("_", "+").replace("-", "+")
+    p = (
+        str(periodo)
+        .strip()
+        .upper()
+        .replace("/", "+")
+        .replace(" ", "")
+        .replace("_", "+")
+        .replace("-", "+")
+    )
     per = str(periodicidad).strip().capitalize()
 
     if p in MAPA_5_CASOS:
@@ -232,6 +255,7 @@ def normalizar_clave_periodo(periodo: str, periodicidad: str = "") -> str:
 
     return p
 
+
 def obtener_filtros_periodo(config: dict):
     periodo = str(config.get("periodo", "")).strip()
     periodicidad = str(config.get("periodicidad", "")).strip()
@@ -246,19 +270,21 @@ def obtener_filtros_periodo(config: dict):
         f"Combinación '{periodo}' no es válida. Los 5 casos soportados son: {casos_validos}"
     )
 
+
 def obtener_prefijo_periodo(config: dict) -> str:
     filtros = obtener_filtros_periodo(config)
     return filtros["prefijo_proyeccion"]
+
 
 def obtener_codigo_atributo(config: dict) -> str:
     prefijo = obtener_prefijo_periodo(config)
     return f"{prefijo}-{config['anio']}"
 
 
-
 # ============================================================================
 # CONSULTAS A LA BASE DE DATOS
 # ============================================================================
+
 
 def query_indicators(engine, centro_id):
     try:
@@ -300,6 +326,7 @@ def query_indicators(engine, centro_id):
     except Exception as e:
         print(f"ERROR query_indicators: {e}")
         return []
+
 
 def query_student_summary(engine, centro_id, config):
     try:
@@ -343,7 +370,7 @@ def query_student_summary(engine, centro_id, config):
 
         with engine.connect() as conn:
             row_pob = conn.execute(query_poblacion, params).mappings().first()
-            row_gen = conn.execute(query_generos,   params).mappings().first()
+            row_gen = conn.execute(query_generos, params).mappings().first()
 
         print(f"row_pob: {dict(row_pob) if row_pob else 'NONE'}")
         print(f"row_gen: {dict(row_gen) if row_gen else 'NONE'}")
@@ -357,13 +384,16 @@ def query_student_summary(engine, centro_id, config):
         print(f"ERROR query_student_summary: {e}")
         return {}
 
+
 def query_proyecciones(engine, centro_id, config):
     try:
         nombre_bd = resolver_centro_id(centro_id)
         prefijo = obtener_prefijo_periodo(config)
         filtro_atributo = f"%{prefijo}%"
         anio_inicio = int(config.get("anio", 2026))
-        print(f"query_proyecciones: '{nombre_bd}' - filtro atributo: '{filtro_atributo}' (años {anio_inicio} a 2030)")
+        print(
+            f"query_proyecciones: '{nombre_bd}' - filtro atributo: '{filtro_atributo}' (años {anio_inicio} a 2030)"
+        )
 
         query = text("""
             SELECT
@@ -389,17 +419,25 @@ def query_proyecciones(engine, centro_id, config):
                 [Año]
         """)
         with engine.connect() as conn:
-            rows = conn.execute(query, {
-                "centro_id": nombre_bd,
-                "atributo": filtro_atributo,
-                "anio_inicio": anio_inicio,
-            }).mappings().all()
+            rows = (
+                conn.execute(
+                    query,
+                    {
+                        "centro_id": nombre_bd,
+                        "atributo": filtro_atributo,
+                        "anio_inicio": anio_inicio,
+                    },
+                )
+                .mappings()
+                .all()
+            )
         normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
         print(f"query_proyecciones: {len(normalizadas)} filas")
         return normalizadas
     except Exception as e:
         print(f"ERROR query_proyecciones: {e}")
         return []
+
 
 def query_matriculados(engine, centro_id, config):
     try:
@@ -433,11 +471,11 @@ def query_matriculados(engine, centro_id, config):
 
         resultado = [
             {
-                "nivel_academico":        str(r["nivel_academico"]).strip(),
-                "modalidad":              str(r["modalidad"]).strip(),
-                "nuevos_matriculados":    int(r["nuevos_matriculados"]    or 0),
+                "nivel_academico": str(r["nivel_academico"]).strip(),
+                "modalidad": str(r["modalidad"]).strip(),
+                "nuevos_matriculados": int(r["nuevos_matriculados"] or 0),
                 "continuos_matriculados": int(r["continuos_matriculados"] or 0),
-                "totales_matriculados":   int(r["totales_matriculados"]   or 0),
+                "totales_matriculados": int(r["totales_matriculados"] or 0),
             }
             for r in rows
         ]
@@ -448,90 +486,137 @@ def query_matriculados(engine, centro_id, config):
         print(f"ERROR query_matriculados: {e}")
         return []
 
+
 def query_desercion(engine, centro_id):
     try:
-        nombre_bd = resolver_centro_id(centro_id)
+        nombre_centro = resolver_centro_id(centro_id)
+
         query = text("""
             SELECT
-                CAST([Año] AS VARCHAR) AS año,
-                RTRIM(LTRIM([Modalidad])) AS modalidad,
-                ROUND(AVG(CAST([Tasa Deserción (periodo)] AS FLOAT)) * 100, 2) AS porcentaje
-            FROM dbo.[Poblacion_Estudiantil2]
-            WHERE [Centro Universitario] = :centro_id
-              AND [Modalidad] IS NOT NULL
-              AND [Año] BETWEEN 2020 AND 2030
-            GROUP BY [Año], RTRIM(LTRIM([Modalidad]))
-            ORDER BY [Año], RTRIM(LTRIM([Modalidad]))
+                [Rectoria] AS rectoria,
+                [Centro Universitario] AS centro_universitario,
+                [Año] AS año,
+                [Modalidad] AS modalidad,
+                [Desercion] * 100 AS desercion_porcentaje
+            FROM dbo.Desercion_Proyecciones
+            WHERE
+                [Centro Universitario] = :centro_id
+            ORDER BY
+                [Año],
+                [Modalidad];
         """)
+
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
+            rows = conn.execute(query, {"centro_id": nombre_centro}).mappings().all()
 
         resultado = [
             {
-                "año": str(r["año"]).strip(),
-                "modalidad": str(r["modalidad"]).strip(),
-                "porcentaje": float(r["porcentaje"] or 0),
+                "rectoria": str(r["rectoria"]).strip() if r["rectoria"] else "",
+                "centro_universitario": (
+                    str(r["centro_universitario"]).strip()
+                    if r["centro_universitario"]
+                    else ""
+                ),
+                "año": int(r["año"]),
+                "modalidad": str(r["modalidad"]).strip() if r["modalidad"] else "",
+                "desercion_porcentaje": float(r["desercion_porcentaje"] or 0),
             }
             for r in rows
         ]
-        print(f"query_desercion: {len(resultado)} filas para '{nombre_bd}'")
+
+        print(f"query_desercion: {len(resultado)} filas para '{nombre_centro}'")
+
         return resultado
+
     except Exception as e:
         print(f"ERROR query_desercion: {e}")
         return []
 
+
 def query_oferta(engine, centro_id, config=None):
     try:
-        nombre_bd = resolver_centro_id(centro_id)
-        print(f"query_oferta: '{nombre_bd}'")
+        nombre_centro = resolver_centro_id(centro_id)
+        print(f"query_oferta: '{nombre_centro}'")
 
         query = text("""
             SELECT
-                CAST([Año] AS VARCHAR) AS año,
-                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') AS nivel_academico,
-                REPLACE(RTRIM(LTRIM([Modalidad])), CHAR(160), '') AS modalidad,
-                REPLACE(RTRIM(LTRIM([Periodicidad])), CHAR(160), '') AS periodicidad,
+                [Año] AS año,
+                [Periodo] AS periodicidad,
+                [Nivel Académico] AS nivel_academico,
+                [Modalidad] AS modalidad,
                 COUNT(DISTINCT [SNIES]) AS snies_unico
-            FROM dbo.[Proyeccion_Estudiantes]
-            WHERE [Centro Universitario] = :centro_id
-              AND [SNIES] IS NOT NULL
-              AND [Año] BETWEEN 2024 AND 2030
+            FROM dbo.Proyeccion_Estudiantes
+            WHERE
+                [Nivel Académico] IN ('Pregrado', 'Posgrado')
+                AND [Modalidad] IN ('Distancia', 'Presencial')
+                AND [Tipo de Información] = 'Meta'
+                AND [Tipo de Estudiante] = 'Nuevos'
+                AND [Periodo] IN ('Q1', 'S1')
+                AND [Centro Universitario] = :centro
+                AND [Año] BETWEEN :anio_desde AND :anio_hasta
             GROUP BY
                 [Año],
-                REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), ''),
-                REPLACE(RTRIM(LTRIM([Modalidad])), CHAR(160), ''),
-                REPLACE(RTRIM(LTRIM([Periodicidad])), CHAR(160), '')
+                [Periodo],
+                [Nivel Académico],
+                [Modalidad]
+            ORDER BY
+                [Nivel Académico],
+                [Modalidad],
+                [Año],
+                [Periodo];
         """)
+
+        params = {
+            "centro": nombre_centro,
+            "anio_desde": 2026,
+            "anio_hasta": 2030,
+        }
+
         with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
+            rows = conn.execute(query, params).mappings().all()
+
         resultado = [
             {
-                "año":             str(r["año"]).strip(),
-                "nivel_academico": str(r["nivel_academico"]).strip() if r["nivel_academico"] else "",
-                "modalidad":       str(r["modalidad"]).strip()       if r["modalidad"]       else "",
-                "periodicidad":    str(r["periodicidad"]).strip()     if r["periodicidad"]    else "",
-                "snies_unico":     int(r["snies_unico"]),
+                "año": int(r["año"]),
+                "nivel_academico": (
+                    str(r["nivel_academico"]).strip() if r["nivel_academico"] else ""
+                ),
+                "modalidad": str(r["modalidad"]).strip() if r["modalidad"] else "",
+                "periodicidad": (
+                    str(r["periodicidad"]).strip() if r["periodicidad"] else ""
+                ),
+                "snies_unico": int(r["snies_unico"]),
             }
             for r in rows
         ]
+
         print(f"query_oferta: {len(resultado)} filas")
         return resultado
+
     except Exception as e:
         print(f"ERROR query_oferta: {e}")
         return []
+
 
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
 
+
 @app.get("/")
 async def root():
     return {"message": "API Observatorio funcionando correctamente"}
 
+
 @app.get("/health")
 async def health():
     engine = conectar_bd()
-    return {"status": "ok", "conexion_bd": engine is not None, "ultimo_error": _ultimo_error}
+    return {
+        "status": "ok",
+        "conexion_bd": engine is not None,
+        "ultimo_error": _ultimo_error,
+    }
+
 
 @app.get("/api/cache/refresh")
 async def refresh_cache(api_key: str = Depends(verificar_api_key)):
@@ -541,8 +626,9 @@ async def refresh_cache(api_key: str = Depends(verificar_api_key)):
     return {
         "status": "ok",
         "mensaje": "Caché limpiado. La próxima consulta de cada centro recargará datos frescos desde Azure.",
-        "centros_eliminados": centros_en_cache
+        "centros_eliminados": centros_en_cache,
     }
+
 
 @app.get("/api/cache/status")
 async def cache_status(api_key: str = Depends(verificar_api_key)):
@@ -559,8 +645,9 @@ async def cache_status(api_key: str = Depends(verificar_api_key)):
     return {
         "total_centros_en_cache": len(_cache),
         "ttl_configurado_dias": _CACHE_TTL // 86400,
-        "centros": estado
+        "centros": estado,
     }
+
 
 @app.get("/api/observatorio/completo/{centro_id}")
 async def get_observatorio_completo(
@@ -581,21 +668,21 @@ async def get_observatorio_completo(
         config = obtener_configuracion(engine)
 
         results = await asyncio.gather(
-            run_query(query_indicators,      engine, centro_id),
+            run_query(query_indicators, engine, centro_id),
             run_query(query_student_summary, engine, centro_id, config),
-            run_query(query_proyecciones,    engine, centro_id, config),
-            run_query(query_matriculados,    engine, centro_id, config),
-            run_query(query_desercion,       engine, centro_id),
-            run_query(query_oferta,          engine, centro_id, config),
+            run_query(query_proyecciones, engine, centro_id, config),
+            run_query(query_matriculados, engine, centro_id, config),
+            run_query(query_desercion, engine, centro_id),
+            run_query(query_oferta, engine, centro_id, config),
         )
         response = {
-            "indicators":       results[0],
-            "studentSummary":   results[1],
-            "proyecciones":     results[2],
-            "matriculados":     results[3],
+            "indicators": results[0],
+            "studentSummary": results[1],
+            "proyecciones": results[2],
+            "matriculados": results[3],
             "matriculados2026": results[3],  # Compatibilidad con frontend
-            "desercion":        results[4],
-            "oferta":           results[5],
+            "desercion": results[4],
+            "oferta": results[5],
         }
         print(f"Tiempo total: {time.time() - t0:.2f}s")
         set_cached(centro_id, response)
@@ -607,12 +694,14 @@ async def get_observatorio_completo(
         print("ERROR:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/api/observatorio/page2/{centro_id}")
 async def get_page2_data(
     centro_id: str,
     api_key: str = Depends(verificar_api_key),
 ):
     return await get_observatorio_completo(centro_id, api_key)
+
 
 @app.get("/api/configuracion")
 async def get_configuracion(
@@ -621,10 +710,7 @@ async def get_configuracion(
     engine = conectar_bd()
 
     if not engine:
-        raise HTTPException(
-            status_code=503,
-            detail="Base de datos no disponible"
-        )
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
     try:
         config = obtener_configuracion(engine)
@@ -632,16 +718,14 @@ async def get_configuracion(
         return {
             "status": "ok",
             "configuracion": config,
-            "atributo_proyeccion": obtener_codigo_atributo(config)
+            "atributo_proyeccion": obtener_codigo_atributo(config),
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.put("/api/configuracion")
 async def actualizar_configuracion(
@@ -651,17 +735,13 @@ async def actualizar_configuracion(
     engine = conectar_bd()
 
     if not engine:
-        raise HTTPException(
-            status_code=503,
-            detail="Base de datos no disponible"
-        )
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
     try:
         # Validar y normalizar a uno de los 5 casos soportados
-        filtros = obtener_filtros_periodo({
-            "periodo": config.periodo,
-            "periodicidad": config.periodicidad
-        })
+        filtros = obtener_filtros_periodo(
+            {"periodo": config.periodo, "periodicidad": config.periodicidad}
+        )
 
         nueva_config = {
             "anio": config.anio,
@@ -682,21 +762,20 @@ async def actualizar_configuracion(
         """)
 
         with engine.begin() as conn:
-            resultado = conn.execute(
-                query,
-                nueva_config
-            )
+            resultado = conn.execute(query, nueva_config)
 
         if resultado.rowcount == 0:
             raise HTTPException(
                 status_code=500,
-                detail="No existe el registro de configuración con id=1 en dbo.Configuracion_Observatorio"
+                detail="No existe el registro de configuración con id=1 en dbo.Configuracion_Observatorio",
             )
 
         # Limpiar automáticamente la memoria caché para forzar datos frescos
         centros_eliminados = list(_cache.keys())
         _cache.clear()
-        print(f"[CACHE] Cache limpiado tras actualizar configuracion. Centros eliminados: {centros_eliminados}")
+        print(
+            f"[CACHE] Cache limpiado tras actualizar configuracion. Centros eliminados: {centros_eliminados}"
+        )
 
         return {
             "status": "ok",
@@ -710,21 +789,16 @@ async def actualizar_configuracion(
         }
 
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=400, detail=str(e))
 
     except HTTPException:
         raise
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="localhost", port=8000, reload=True)
