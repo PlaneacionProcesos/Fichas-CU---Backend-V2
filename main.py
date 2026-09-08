@@ -360,6 +360,7 @@ def query_student_summary(engine, centro_id, config):
                 SUM([Estudiantes Totales]) AS total_general
             FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
+              AND [Facultad] NOT IN ('FEBPE') 
               AND [Año] = :anio
               AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
               AND {clausula_poblacion}
@@ -372,6 +373,7 @@ def query_student_summary(engine, centro_id, config):
             FROM dbo.[Caracterizacion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
               AND [Año] = :anio
+              AND [Facultad] NOT IN ('FEBPE')
               AND {clausula_poblacion}
         """)
 
