@@ -421,6 +421,7 @@ def query_proyecciones(engine, centro_id, config):
                 SUM([Valor]) AS [Valor]
             FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
+              AND [Facultad] NOT IN ('FEBPE') 
               AND [Atributo] LIKE :atributo
               AND [Año] BETWEEN :anio_inicio AND 2030
             GROUP BY
