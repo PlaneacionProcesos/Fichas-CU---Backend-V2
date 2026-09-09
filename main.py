@@ -518,7 +518,6 @@ def query_desercion(engine, centro_id):
             FROM dbo.Desercion_Proyecciones
             WHERE
                 [Centro Universitario] = :centro_id
-                AND [Facultad] NOT IN ('FEBPE') 
             ORDER BY
                 [Año],
                 [Modalidad];
@@ -572,6 +571,7 @@ def query_oferta(engine, centro_id, config=None):
                 AND [Periodo] IN ('Q1', 'S1')
                 AND [Centro Universitario] = :centro
                 AND [Año] BETWEEN :anio_desde AND :anio_hasta
+                AND [Facultad] NOT IN ('FEBPE')
             GROUP BY
                 [Año],
                 [Periodo],
