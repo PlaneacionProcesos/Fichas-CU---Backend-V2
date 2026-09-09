@@ -313,6 +313,7 @@ def query_indicators(engine, centro_id):
                 SUM(CASE WHEN [Año] = 2030 THEN [Valor] ELSE 0 END) AS [2030]
             FROM dbo.[Proyeccion_Estudiantes]
             WHERE [Centro Universitario] = :centro_id
+              AND [Facultad] NOT IN ('FEBPE') 
               AND [Año] BETWEEN 2024 AND 2030
             GROUP BY [Tipo de Información], [Tipo de Estudiante]
             ORDER BY [Tipo de Información], [Tipo de Estudiante]
@@ -470,6 +471,7 @@ def query_matriculados(engine, centro_id, config):
                 SUM([Estudiantes Totales]) AS totales_matriculados
             FROM dbo.[Poblacion_Estudiantil2]
             WHERE [Centro Universitario] = :centro_id
+              AND [Facultad] NOT IN ('FEBPE') 
               AND [Año] = :anio
               AND REPLACE(RTRIM(LTRIM([Nivel Académico])), CHAR(160), '') IN ('Pregrado', 'Posgrado')
               AND {clausula_poblacion}
@@ -516,6 +518,7 @@ def query_desercion(engine, centro_id):
             FROM dbo.Desercion_Proyecciones
             WHERE
                 [Centro Universitario] = :centro_id
+                AND [Facultad] NOT IN ('FEBPE') 
             ORDER BY
                 [Año],
                 [Modalidad];
