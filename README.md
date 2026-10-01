@@ -1,7 +1,10 @@
 # API Fichas Centro Universitario (FastAPI)
 Esta es una API robusta construida con FastAPI para gestionar y consultar indicadores, proyecciones y datos estadísticos de estudiantes. Está diseñada para conectarse a una base de datos SQL Server (MSSQL) y servir datos normalizados a un frontend moderno.
 
-link: api-cu-production.up.railway.app
+Despliegues actuales:
+
+- Render (principal): `https://fichas-cu-backend-v2.onrender.com`
+- Vercel (respaldo): ambos despliegues deben compartir la misma instancia Redis.
 
 ## 🚀 Características Principales
 FastAPI Framework: Alto rendimiento y facilidad de uso.
@@ -20,7 +23,8 @@ Procesamiento de datos desde la DB para entregar JSON limpios y en formato snake
 
 ## 🛠️ Requisitos e Instalación
 ### 1. Variables de Entorno
-Crea un archivo .env en la raíz del proyecto (o configúralas en el panel de Railway):
+Crea un archivo `.env` en la raíz del proyecto o configura estas variables en
+Render y Vercel. Los valores Redis deben ser idénticos en ambos despliegues:
 
 Fragmento de código
 
@@ -41,10 +45,13 @@ REDIS_HOST=host_entregado_por_redis_cloud
 REDIS_PORT=puerto_entregado_por_redis_cloud
 REDIS_USERNAME=default
 REDIS_PASSWORD=contraseña_entregada_por_redis_cloud
-REDIS_SSL=true
+# Para el puerto 15286 actualmente validado en Redis Cloud:
+REDIS_SSL=false
 CACHE_REFRESH_SECRET=secreto_independiente_para_refresh
 
-También puede usarse `REDIS_URL` en lugar de las variables Redis separadas. No
+También puede usarse `REDIS_URL` en lugar de las variables Redis separadas. Si el
+proveedor entrega un puerto TLS, debe configurarse `REDIS_SSL=true`; el puerto
+`15286` validado el 1 de octubre de 2026 sólo respondió con `REDIS_SSL=false`. No
 usar variables `VITE_*`: las credenciales son exclusivamente del backend. El pool
 está limitado a 4 conexiones por instancia y usa timeouts cortos.
 
@@ -117,9 +124,14 @@ curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: appl
 curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: application/json" -H "X-API-Key: TU_API_KEY" -d "{\"anio\": 2026, \"periodo\": \"S2+Q3\", \"periodicidad\": \"Semestral\"}"
 ```
 
-### ⚡ Gestión de Caché (Protegidos con `X-API-Key`)
-- **`GET /api/cache/refresh`**: Limpia manualmente todos los centros almacenados en la memoria caché para forzar la recarga desde Azure SQL en la siguiente petición.
-- **`GET /api/cache/status`**: Muestra el estado del caché, cantidad de centros en memoria, fechas de carga y tiempo restante de expiración (TTL).
+### ⚡ Gestión de caché
+
+- **`GET /api/cache/status`** (`X-API-Key`): muestra si Redis está inicializado,
+  la versión, la fecha de actualización y el total de centros. No consulta Azure.
+- **`POST /api/admin/cache/refresh`** (`X-Cache-Refresh-Secret`): única operación
+  del flujo normal que reconstruye el consolidado consultando Azure SQL.
+- **`GET /api/cache/refresh`**: endpoint legado de la caché local en memoria. No
+  debe utilizarse para actualizar la caché Redis compartida.
 
 ### 📊 Datos del Observatorio (Protegidos con `X-API-Key`)
 - **`GET /api/observatorio/sede-bogota`**: Retorna los cinco centros bajo
@@ -147,6 +159,26 @@ El workflow `.github/workflows/refresh-cache.yml` ofrece el botón manual
 completa del endpoint) y `CACHE_REFRESH_SECRET`. Su paso puede reutilizarse tras
 una carga de datos exitosa.
 
+Para el backend principal actual:
+
+```text
+CACHE_REFRESH_URL=https://fichas-cu-backend-v2.onrender.com/api/admin/cache/refresh
+```
+
+El valor debe guardarse como texto plano, sin comillas, espacios ni formato de
+enlace Markdown. Si se usan GitHub Environment secrets, el job debe declarar el
+Environment correspondiente (actualmente `Production`).
+
+La actualización fue validada el 1 de octubre de 2026 con cinco centros:
+
+```json
+{
+  "status": "ok",
+  "version": 1,
+  "centros": 5
+}
+```
+
 Las pruebas se ejecutan sin Azure con `python -m pytest -q`. Cubren HIT sin SQL,
 refresh exitoso, conservación ante fallo, bloqueo concurrente, autenticación,
 contrato consolidado y reutilización/cierre de conexión. Queda pendiente validar
@@ -163,15 +195,22 @@ centro-engativa ➡️ "Especial Minuto de Dios - Engativá"
 
 centro-perdomo-ciudad-bolivar ➡️ "Perdomo - Ciudad Bolívar"
 
-## 🚀 Despliegue en Railway
-Este proyecto está listo para Railway mediante el archivo main.py.
+## 🚀 Despliegue en Render y Vercel
 
-Conecta tu repositorio de GitHub a Railway.
+Render es el backend principal y Vercel el respaldo. Ambos deben desplegar el
+mismo código y compartir `API_KEY_SECRET`, las variables de Azure SQL y las
+variables Redis. El comando de inicio en Render es:
 
-Hay que configurar el comando de inicio de la API con este:
 uvicorn main:app --host 0.0.0.0 --port $PORT
 
-Luego se configuran todas las Variables de Entorno en la pestaña Variables del servicio en Railway.
+Con `REDIS_CACHE_ENABLED=true`, tanto el endpoint consolidado como los endpoints
+individuales obtienen sus datos de Redis. Un fallo o MISS de Redis devuelve 503 y
+no activa Azure automáticamente. `/health` tampoco consulta la base de datos.
+
+El proxy del frontend expone `X-Backend-Used: primary|fallback` y
+`X-Circuit-State` para indicar qué backend respondió. `Server: Vercel` y
+`X-Vercel-Cache: MISS` describen la capa HTTP del proxy y no significan un MISS de
+Redis ni una consulta a Azure.
 
 ## ⚙️ Estructura del Código
 Gestión de Conexión: El motor de la base de datos utiliza un pool_pre_ping=True para evitar conexiones muertas, algo común en entornos de nube.
