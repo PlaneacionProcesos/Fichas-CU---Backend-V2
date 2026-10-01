@@ -6,7 +6,7 @@ on:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-
+    environment: Production
     steps:
       - name: Validate refresh configuration
         env:
