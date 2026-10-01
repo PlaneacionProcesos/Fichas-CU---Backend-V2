@@ -2,14 +2,21 @@ import os
 import time
 import asyncio
 import secrets
+import json
+import logging
+import uuid
+from datetime import datetime, timezone
+from contextvars import ContextVar
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi import FastAPI, HTTPException, Security, Depends, Header
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from urllib.parse import quote_plus
 from pydantic import BaseModel
+import redis
+from redis import Redis
 
 load_dotenv()
 
@@ -20,9 +27,30 @@ DB_PASS = os.getenv("DB_PASS")
 DB_PORT = os.getenv("DB_PORT", "1433")
 DB_NAME = os.getenv("DB_NAME")
 API_KEY_SECRETA = os.getenv("API_KEY_SECRET")
+CACHE_REFRESH_SECRET = os.getenv("CACHE_REFRESH_SECRET")
+
+REDIS_CACHE_ENABLED = os.getenv("REDIS_CACHE_ENABLED", "false").lower() in {
+    "1", "true", "yes", "on"
+}
+REDIS_URL = os.getenv("REDIS_URL")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_USERNAME = os.getenv("REDIS_USERNAME", "default")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_SSL = os.getenv("REDIS_SSL", "true").lower() in {"1", "true", "yes", "on"}
 
 if not all([DB_HOST, DB_USER, DB_PASS, DB_NAME, API_KEY_SECRETA]):
     raise ValueError("Faltan variables de entorno criticas")
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("fichas-cu")
+
+BOGOTA_CACHE_KEY = "fichas-cu:bogota:active"
+BOGOTA_REFRESH_LOCK_KEY = "fichas-cu:bogota:refresh-lock"
+BOGOTA_REFRESH_LOCK_SECONDS = 900
+BOGOTA_CACHE_SCHEMA_VERSION = 1
+_redis_client = None
+_strict_query_errors = ContextVar("strict_query_errors", default=False)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -39,6 +67,47 @@ async def verificar_api_key(x_api_key: str | None = Security(api_key_header)):
             detail="Acceso no autorizado: API-Key inválida",
         )
     return x_api_key
+
+
+async def verificar_refresh_secret(
+    x_cache_refresh_secret: str | None = Header(default=None),
+):
+    if not CACHE_REFRESH_SECRET or not x_cache_refresh_secret:
+        raise HTTPException(status_code=401, detail="Falta autenticación administrativa")
+    if not secrets.compare_digest(x_cache_refresh_secret, CACHE_REFRESH_SECRET):
+        raise HTTPException(status_code=403, detail="Credencial administrativa inválida")
+
+
+def get_redis_client() -> Redis | None:
+    """Crea perezosamente un cliente con un pool pequeño apto para serverless."""
+    global _redis_client
+    if not REDIS_CACHE_ENABLED:
+        return None
+    if _redis_client is not None:
+        return _redis_client
+    common = {
+        "decode_responses": True,
+        "socket_connect_timeout": 2,
+        "socket_timeout": 3,
+        "socket_keepalive": True,
+        "health_check_interval": 30,
+        "max_connections": 4,
+        "retry_on_timeout": False,
+    }
+    if REDIS_URL:
+        _redis_client = Redis.from_url(REDIS_URL, **common)
+    elif REDIS_HOST and REDIS_PASSWORD:
+        _redis_client = Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            username=REDIS_USERNAME,
+            password=REDIS_PASSWORD,
+            ssl=REDIS_SSL,
+            **common,
+        )
+    else:
+        raise RuntimeError("Redis habilitado pero su configuración está incompleta")
+    return _redis_client
 
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -175,6 +244,20 @@ def resolver_centro_id(centro_id: str) -> str:
     return CENTRO_ID_MAPA.get(limpio, limpio)
 
 
+def _mappings_all(db, query, params=None):
+    if hasattr(db, "connect"):
+        with db.connect() as conn:
+            return conn.execute(query, params or {}).mappings().all()
+    return db.execute(query, params or {}).mappings().all()
+
+
+def _mappings_first(db, query, params=None):
+    if hasattr(db, "connect"):
+        with db.connect() as conn:
+            return conn.execute(query, params or {}).mappings().first()
+    return db.execute(query, params or {}).mappings().first()
+
+
 def obtener_configuracion(engine):
     query = text("""
         SELECT
@@ -185,8 +268,7 @@ def obtener_configuracion(engine):
         WHERE id = 1
     """)
 
-    with engine.connect() as conn:
-        row = conn.execute(query).mappings().first()
+    row = _mappings_first(engine, query)
 
     if not row:
         raise HTTPException(
@@ -318,8 +400,7 @@ def query_indicators(engine, centro_id):
             GROUP BY [Tipo de Información], [Tipo de Estudiante]
             ORDER BY [Tipo de Información], [Tipo de Estudiante]
         """)
-        with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_bd}).mappings().all()
+        rows = _mappings_all(engine, query, {"centro_id": nombre_bd})
 
         resultado = [
             {
@@ -338,6 +419,8 @@ def query_indicators(engine, centro_id):
         return resultado
     except Exception as e:
         print(f"ERROR query_indicators: {e}")
+        if _strict_query_errors.get():
+            raise
         return []
 
 
@@ -383,9 +466,8 @@ def query_student_summary(engine, centro_id, config):
             "anio": config["anio"],
         }
 
-        with engine.connect() as conn:
-            row_pob = conn.execute(query_poblacion, params).mappings().first()
-            row_gen = conn.execute(query_generos, params).mappings().first()
+        row_pob = _mappings_first(engine, query_poblacion, params)
+        row_gen = _mappings_first(engine, query_generos, params)
 
         print(f"row_pob: {dict(row_pob) if row_pob else 'NONE'}")
         print(f"row_gen: {dict(row_gen) if row_gen else 'NONE'}")
@@ -397,6 +479,8 @@ def query_student_summary(engine, centro_id, config):
 
     except Exception as e:
         print(f"ERROR query_student_summary: {e}")
+        if _strict_query_errors.get():
+            raise
         return {}
 
 
@@ -434,24 +518,22 @@ def query_proyecciones(engine, centro_id, config):
                 [Tipo de Información],
                 [Año]
         """)
-        with engine.connect() as conn:
-            rows = (
-                conn.execute(
-                    query,
-                    {
-                        "centro_id": nombre_bd,
-                        "atributo": filtro_atributo,
-                        "anio_inicio": anio_inicio,
-                    },
-                )
-                .mappings()
-                .all()
-            )
+        rows = _mappings_all(
+            engine,
+            query,
+            {
+                "centro_id": nombre_bd,
+                "atributo": filtro_atributo,
+                "anio_inicio": anio_inicio,
+            },
+        )
         normalizadas = [normalizar_fila_proyecciones(dict(r)) for r in rows]
         print(f"query_proyecciones: {len(normalizadas)} filas")
         return normalizadas
     except Exception as e:
         print(f"ERROR query_proyecciones: {e}")
+        if _strict_query_errors.get():
+            raise
         return []
 
 
@@ -483,8 +565,7 @@ def query_matriculados(engine, centro_id, config):
             "centro_id": nombre_bd,
             "anio": config["anio"],
         }
-        with engine.connect() as conn:
-            rows = conn.execute(query, params).mappings().all()
+        rows = _mappings_all(engine, query, params)
 
         resultado = [
             {
@@ -501,6 +582,8 @@ def query_matriculados(engine, centro_id, config):
 
     except Exception as e:
         print(f"ERROR query_matriculados: {e}")
+        if _strict_query_errors.get():
+            raise
         return []
 
 
@@ -523,8 +606,7 @@ def query_desercion(engine, centro_id):
                 [Modalidad];
         """)
 
-        with engine.connect() as conn:
-            rows = conn.execute(query, {"centro_id": nombre_centro}).mappings().all()
+        rows = _mappings_all(engine, query, {"centro_id": nombre_centro})
 
         resultado = [
             {
@@ -547,6 +629,8 @@ def query_desercion(engine, centro_id):
 
     except Exception as e:
         print(f"ERROR query_desercion: {e}")
+        if _strict_query_errors.get():
+            raise
         return []
 
 
@@ -590,8 +674,7 @@ def query_oferta(engine, centro_id, config=None):
             "anio_hasta": 2030,
         }
 
-        with engine.connect() as conn:
-            rows = conn.execute(query, params).mappings().all()
+        rows = _mappings_all(engine, query, params)
 
         resultado = [
             {
@@ -613,7 +696,100 @@ def query_oferta(engine, centro_id, config=None):
 
     except Exception as e:
         print(f"ERROR query_oferta: {e}")
+        if _strict_query_errors.get():
+            raise
         return []
+
+
+def construir_datos_centro(db, centro_id: str, config: dict) -> dict:
+    """Conserva el contrato histórico usando la misma conexión recibida."""
+    matriculados = query_matriculados(db, centro_id, config)
+    return {
+        "indicators": query_indicators(db, centro_id),
+        "studentSummary": query_student_summary(db, centro_id, config),
+        "proyecciones": query_proyecciones(db, centro_id, config),
+        "matriculados": matriculados,
+        "matriculados2026": matriculados,
+        "desercion": query_desercion(db, centro_id),
+        "oferta": query_oferta(db, centro_id, config),
+    }
+
+
+def construir_consolidado_bogota(engine) -> dict:
+    """Construye los cinco centros con una sola conexión SQLAlchemy."""
+    token = _strict_query_errors.set(True)
+    try:
+        with engine.connect() as conn:
+            config = obtener_configuracion(conn)
+            centros = {
+                centro_id: construir_datos_centro(conn, centro_id, config)
+                for centro_id in CENTRO_ID_MAPA
+            }
+            conn.execute(text("SELECT 1"))
+    finally:
+        _strict_query_errors.reset(token)
+    return {
+        "cache_updated_at": datetime.now(timezone.utc).isoformat(),
+        "version": BOGOTA_CACHE_SCHEMA_VERSION,
+        "centros": centros,
+    }
+
+
+def leer_consolidado_cache() -> dict | None:
+    client = get_redis_client()
+    if client is None:
+        return None
+    raw = client.get(BOGOTA_CACHE_KEY)
+    return json.loads(raw) if raw else None
+
+
+def refrescar_consolidado_bogota() -> dict:
+    """Publica sólo una construcción completa y conserva siempre el valor anterior."""
+    client = get_redis_client()
+    if client is None:
+        raise RuntimeError("La caché Redis está deshabilitada")
+
+    lock_token = secrets.token_urlsafe(24)
+    acquired = client.set(
+        BOGOTA_REFRESH_LOCK_KEY,
+        lock_token,
+        nx=True,
+        ex=BOGOTA_REFRESH_LOCK_SECONDS,
+    )
+    if not acquired:
+        raise HTTPException(status_code=409, detail="Ya hay una actualización en curso")
+
+    temp_key = f"{BOGOTA_CACHE_KEY}:tmp:{uuid.uuid4().hex}"
+    try:
+        engine = conectar_bd()
+        if not engine:
+            raise RuntimeError("Azure SQL no está disponible")
+        payload = construir_consolidado_bogota(engine)
+        serialized = json.dumps(payload, ensure_ascii=False, default=str)
+        client.set(temp_key, serialized)
+        client.rename(temp_key, BOGOTA_CACHE_KEY)
+        logger.info(
+            "Caché Bogotá actualizada: version=%s updated_at=%s centros=%s",
+            payload["version"], payload["cache_updated_at"], len(payload["centros"]),
+        )
+        return payload
+    except Exception:
+        try:
+            client.delete(temp_key)
+        except redis.RedisError:
+            logger.warning("No fue posible limpiar la clave temporal de caché")
+        raise
+    finally:
+        try:
+            client.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                "return redis.call('del', KEYS[1]) else return 0 end",
+                1,
+                BOGOTA_REFRESH_LOCK_KEY,
+                lock_token,
+            )
+        except redis.RedisError:
+            logger.warning("No fue posible liberar el bloqueo; expirará automáticamente")
 
 
 # ============================================================================
@@ -628,16 +804,14 @@ async def root():
 
 @app.get("/health")
 async def health():
-    engine = conectar_bd()
     return {
         "status": "ok",
-        "conexion_bd": engine is not None,
-        "ultimo_error": _ultimo_error,
+        "database_probe": "disabled",
     }
 
 
 @app.get("/api/cache/refresh")
-async def refresh_cache(api_key: str = Depends(verificar_api_key)):
+async def refresh_legacy_memory_cache(api_key: str = Depends(verificar_api_key)):
     centros_en_cache = list(_cache.keys())
     _cache.clear()
     print(f"[CACHE] Cache limpiado manualmente. Centros eliminados: {centros_en_cache}")
@@ -648,8 +822,62 @@ async def refresh_cache(api_key: str = Depends(verificar_api_key)):
     }
 
 
+@app.post("/api/admin/cache/refresh")
+async def refresh_bogota_cache(
+    _: None = Depends(verificar_refresh_secret),
+):
+    try:
+        payload = await run_query(refrescar_consolidado_bogota)
+        return {
+            "status": "ok",
+            "cache_updated_at": payload["cache_updated_at"],
+            "version": payload["version"],
+            "centros": len(payload["centros"]),
+        }
+    except HTTPException:
+        raise
+    except redis.RedisError:
+        logger.exception("Falló Redis durante la actualización de caché")
+        raise HTTPException(status_code=503, detail="Caché compartida no disponible")
+    except Exception:
+        logger.exception("Falló la construcción del consolidado; se conserva la caché anterior")
+        raise HTTPException(status_code=503, detail="No fue posible actualizar la caché")
+
+
+@app.get("/api/observatorio/sede-bogota")
+async def get_observatorio_sede_bogota(
+    api_key: str = Depends(verificar_api_key),
+):
+    try:
+        cached = await run_query(leer_consolidado_cache)
+    except (redis.RedisError, ValueError, RuntimeError):
+        logger.exception("No fue posible leer la caché compartida")
+        raise HTTPException(status_code=503, detail="Caché compartida no disponible")
+    if cached is None:
+        # Las lecturas nunca reconstruyen ni abren SQL: evita estampidas y activaciones.
+        raise HTTPException(
+            status_code=503,
+            detail="Caché aún no inicializada; ejecute la actualización administrativa",
+        )
+    return cached
+
+
 @app.get("/api/cache/status")
 async def cache_status(api_key: str = Depends(verificar_api_key)):
+    if REDIS_CACHE_ENABLED:
+        try:
+            cached = await run_query(leer_consolidado_cache)
+        except (redis.RedisError, ValueError, RuntimeError):
+            raise HTTPException(status_code=503, detail="Caché compartida no disponible")
+        return {
+            "backend": "redis",
+            "initialized": cached is not None,
+            "cache_updated_at": cached.get("cache_updated_at") if cached else None,
+            "version": cached.get("version") if cached else None,
+            "total_centros": len(cached.get("centros", {})) if cached else 0,
+            "expires": False,
+        }
+
     ahora = time.time()
     estado = {}
     for centro_id, (data, ts) in _cache.items():
@@ -672,6 +900,22 @@ async def get_observatorio_completo(
     centro_id: str,
     api_key: str = Depends(verificar_api_key),
 ):
+    if REDIS_CACHE_ENABLED:
+        try:
+            consolidated = await run_query(leer_consolidado_cache)
+        except (redis.RedisError, ValueError, RuntimeError):
+            logger.exception("No fue posible leer la caché compartida")
+            raise HTTPException(status_code=503, detail="Caché compartida no disponible")
+        if consolidated is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Caché aún no inicializada; ejecute la actualización administrativa",
+            )
+        centro = consolidated.get("centros", {}).get(centro_id)
+        if centro is None:
+            raise HTTPException(status_code=404, detail="Centro no encontrado")
+        return centro
+
     cached = get_cached(centro_id)
     if cached:
         return cached

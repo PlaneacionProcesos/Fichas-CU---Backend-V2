@@ -24,7 +24,7 @@ Crea un archivo .env en la raíz del proyecto (o configúralas en el panel de Ra
 
 Fragmento de código
 
-DB_SERVER=tu_servidor.database.windows.net
+DB_HOST=tu_servidor.database.windows.net
 
 DB_USER= (usuario de consulta de DB)
 
@@ -36,6 +36,17 @@ DB_NAME= (nombre de db)
 
 API_KEY_SECRET=(una clave muy segura)
 
+REDIS_CACHE_ENABLED=true
+REDIS_HOST=host_entregado_por_redis_cloud
+REDIS_PORT=puerto_entregado_por_redis_cloud
+REDIS_USERNAME=default
+REDIS_PASSWORD=contraseña_entregada_por_redis_cloud
+REDIS_SSL=true
+CACHE_REFRESH_SECRET=secreto_independiente_para_refresh
+
+También puede usarse `REDIS_URL` en lugar de las variables Redis separadas. No
+usar variables `VITE_*`: las credenciales son exclusivamente del backend. El pool
+está limitado a 4 conexiones por instancia y usa timeouts cortos.
 
 ### 2. Instalación de dependencias
 Bash
@@ -50,7 +61,7 @@ X-API-Key	El valor definido en API_KEY_SECRET
 
 ### 🟢 Públicos / Monitoreo
 - **`GET /`**: Verifica que la API esté en línea.
-- **`GET /health`**: Estado detallado de la conexión a la base de datos y últimos errores registrados.
+- **`GET /health`**: Confirma que la API está en línea sin consultar ni reactivar Azure SQL.
 
 ### ⚙️ Configuración del Observatorio (Protegidos con `X-API-Key`)
 - **`GET /api/configuracion`**: Consulta la configuración activa en Azure SQL (`dbo.Configuracion_Observatorio`), el caso de período actual y el atributo proyectado calculado.
@@ -111,6 +122,9 @@ curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: appl
 - **`GET /api/cache/status`**: Muestra el estado del caché, cantidad de centros en memoria, fechas de carga y tiempo restante de expiración (TTL).
 
 ### 📊 Datos del Observatorio (Protegidos con `X-API-Key`)
+- **`GET /api/observatorio/sede-bogota`**: Retorna los cinco centros bajo
+  `centros`, más `cache_updated_at` y `version`. Sólo lee Redis; un HIT no abre
+  SQL. Un MISS o caída de Redis devuelve 503 para evitar estampidas.
 - **`GET /api/observatorio/completo/{centro_id}`**: Retorna un objeto consolidado con toda la información necesaria para el tablero según la configuración activa:
   - **`indicators`**: Proyecciones anuales (2025-2030).
   - **`studentSummary`**: Resumen de población por género y modalidad para el año y período configurados.
@@ -119,6 +133,26 @@ curl.exe -X PUT "http://localhost:8000/api/configuracion" -H "Content-Type: appl
   - **`desercion`**: Tasas de deserción por modalidad.
   - **`oferta`**: Conteo de programas únicos (SNIES) proyectados en una ventana de 5 años a partir del año configurado.
 - **`GET /api/observatorio/page2/{centro_id}`**: Retorna los datos del observatorio para la página 2.
+
+### Actualización explícita de caché
+
+`POST /api/admin/cache/refresh` se protege con `X-Cache-Refresh-Secret`. Adquiere
+un bloqueo distribuido con expiración, construye los cinco centros usando una sola
+conexión SQLAlchemy y publica mediante una clave temporal y reemplazo atómico. Si
+Azure o la construcción fallan, la versión activa anterior se conserva. La caché
+no tiene TTL y no se refresca periódicamente.
+
+El workflow `.github/workflows/refresh-cache.yml` ofrece el botón manual
+`workflow_dispatch`. Configure únicamente los secrets `CACHE_REFRESH_URL` (URL
+completa del endpoint) y `CACHE_REFRESH_SECRET`. Su paso puede reutilizarse tras
+una carga de datos exitosa.
+
+Las pruebas se ejecutan sin Azure con `python -m pytest -q`. Cubren HIT sin SQL,
+refresh exitoso, conservación ante fallo, bloqueo concurrente, autenticación,
+contrato consolidado y reutilización/cierre de conexión. Queda pendiente validar
+en octubre contenido y tiempos reales contra Azure. No se introdujeron consultas
+por conjunto con `IN/GROUP BY`: deben compararse con datos reales antes de sustituir
+las consultas actuales.
 
 ## 📊 Mapeo de Centros Universitarios
 La API traduce automáticamente los IDs del frontend a los nombres exactos en la base de datos. Algunos ejemplos soportados:

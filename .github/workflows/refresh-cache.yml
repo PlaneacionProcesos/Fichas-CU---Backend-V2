@@ -1,0 +1,19 @@
+name: Refresh Bogotá cache
+
+on:
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh shared cache
+        env:
+          CACHE_REFRESH_URL: ${{ secrets.CACHE_REFRESH_URL }}
+          CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors --retry-delay 10 \
+            --connect-timeout 15 --max-time 900 \
+            -X POST "$CACHE_REFRESH_URL" \
+            -H "X-Cache-Refresh-Secret: $CACHE_REFRESH_SECRET"
