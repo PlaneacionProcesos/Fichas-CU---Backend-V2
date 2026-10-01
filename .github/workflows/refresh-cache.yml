@@ -7,13 +7,24 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Refresh shared cache
+      - name: Validate refresh configuration
         env:
           CACHE_REFRESH_URL: ${{ secrets.CACHE_REFRESH_URL }}
           CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
         run: |
-          curl --fail-with-body --silent --show-error \
-            --retry 3 --retry-all-errors --retry-delay 10 \
-            --connect-timeout 15 --max-time 900 \
-            -X POST "$CACHE_REFRESH_URL" \
-            -H "X-Cache-Refresh-Secret: $CACHE_REFRESH_SECRET"
+          test -n "$CACHE_REFRESH_URL" || { echo "::error::CACHE_REFRESH_URL is empty"; exit 1; }
+          test -n "$CACHE_REFRESH_SECRET" || { echo "::error::CACHE_REFRESH_SECRET is empty"; exit 1; }
+          case "$CACHE_REFRESH_URL" in
+            https://*) ;;
+            *) echo "::error::CACHE_REFRESH_URL must be a complete https:// URL without quotes"; exit 1 ;;
+          esac
+
+      - name: Refresh shared cache
+        env:
+          CACHE_REFRESH_URL: ${{ secrets.CACHE_REFRESH_URL }}
+          CACHE_REFRESH_SECRET: ${{ secrets.CACHE_REFRESH_SECRET }}
+        run: >-
+          curl --fail-with-body --silent --show-error --retry 3
+          --retry-all-errors --retry-delay 10 --connect-timeout 15
+          --max-time 900 --request POST --url "$CACHE_REFRESH_URL"
+          --header "X-Cache-Refresh-Secret: $CACHE_REFRESH_SECRET"
